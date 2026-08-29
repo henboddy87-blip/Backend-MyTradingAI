@@ -561,9 +561,14 @@ class TrackRecordSummaryOut(BaseModel):
     wins: int
     losses: int
     win_rate: float
+    loss_rate: float = 0.0
     average_r: float
+    average_win_r: float = 0.0
+    average_loss_r: float = 0.0
     profit_factor: float
     total_r: float
+    max_drawdown_pct: float = 0.0
+    expectancy_r: float = 0.0
     best_symbol: str
     worst_symbol: str
     equity_curve: List[EquityPoint]
