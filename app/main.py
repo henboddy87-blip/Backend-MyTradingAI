@@ -14,6 +14,18 @@ async def lifespan(app: FastAPI):
     # Startup: Create tables if not exist & start scheduler
     logger.info(f"Starting {settings.APP_NAME} SaaS Backend (Data Mode: {settings.DATA_MODE})...")
     Base.metadata.create_all(bind=engine)
+    try:
+        from app.models.models import User
+        from app.core.database import SessionLocal
+        from seed import run_seed
+        _db = SessionLocal()
+        if not _db.query(User).first():
+            logger.info("Fresh database detected. Auto-seeding initial assets, models, and demo accounts...")
+            run_seed()
+        _db.close()
+    except Exception as e:
+        logger.warning(f"Auto-seed check note: {e}")
+
     start_background_scheduler()
     yield
     # Shutdown: Stop scheduler
