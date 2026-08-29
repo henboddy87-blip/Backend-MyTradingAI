@@ -8,6 +8,17 @@ from app.services.mcp_service import MCPService
 
 router = APIRouter(prefix="/mcp", tags=["Model Context Protocol"])
 
+@router.get("")
+@router.get("/")
+def get_mcp_info():
+    return {
+        "status": "active",
+        "protocol": "Model Context Protocol (MCP) JSON-RPC 2.0",
+        "endpoint": "/api/mcp",
+        "description": "Quant AI tools & market analysis endpoint for AI assistants and MCP clients."
+    }
+
+@router.post("", response_model=MCPResponse)
 @router.post("/", response_model=MCPResponse)
 async def handle_mcp_call(
     request: MCPRequest,
