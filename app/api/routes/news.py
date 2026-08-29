@@ -46,6 +46,26 @@ def get_news_feed(
 
     return result
 
+@router.get("/calendar")
+def get_economic_calendar(symbol: str = Query("XAUUSD")):
+    events = NewsService.get_economic_calendar(symbol)
+    risk_info = NewsService.check_economic_event_risk(symbol)
+    return {
+        "symbol": symbol.upper(),
+        "news_risk": risk_info.get("news_risk"),
+        "warning": risk_info.get("warning"),
+        "events": [e.dict() if hasattr(e, "dict") else e for e in events]
+    }
+
+@router.get("/sentiment-overview")
+def get_market_sentiment_overview(
+    symbol: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    news_items = NewsService.get_news(db, language="en", symbol=symbol, limit=20)
+    sentiment_data = NewsService.calculate_news_sentiment_breakdown(symbol or "ALL", news_items)
+    return sentiment_data
+
 @router.get("/{id}", response_model=NewsOut)
 def get_single_news(id: int, db: Session = Depends(get_db)):
     item = db.query(News).filter(News.id == id).first()

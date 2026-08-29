@@ -1,14 +1,161 @@
 import datetime
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
+from app.config import settings
 from app.models.models import Signal, SignalOutcome, Asset
 from app.market import get_market_data_provider
 from app.services.technical_analysis import TechnicalAnalysisService
 from app.services.ai_council import AIAgentAnalystCouncil
+from app.services.news_service import NewsService
 from app.services.risk_engine import RiskEngine
 from app.core.logging import logger
 
 class SignalEngine:
+    @classmethod
+    def calculate_confluence_scores(
+        cls,
+        tech,
+        mtf,
+        news_analysis,
+        event_risk,
+        current_price: float
+    ) -> Dict[str, float]:
+        """
+        Combines 10 evidence pillars using configurable weights from backend Settings:
+        - Market Structure (20%)
+        - Higher-Timeframe Trend (15%)
+        - Trend Indicators (10%)
+        - Momentum (10%)
+        - Multi-Timeframe Alignment (15%)
+        - Support/Resistance & Headroom (10%)
+        - Volatility & Regime (5%)
+        - Volume Confirmation (5%)
+        - News & Sentiment (5%)
+        - Risk/Reward Buffer (5%)
+        """
+        w_struct = settings.WEIGHT_MARKET_STRUCTURE
+        w_htf = settings.WEIGHT_HTF_TREND
+        w_trend = settings.WEIGHT_TREND_INDICATORS
+        w_mom = settings.WEIGHT_MOMENTUM
+        w_mtf = settings.WEIGHT_MULTI_TIMEFRAME
+        w_sr = settings.WEIGHT_SUPPORT_RESISTANCE
+        w_vol = settings.WEIGHT_VOLATILITY
+        w_volume = settings.WEIGHT_VOLUME
+        w_news = settings.WEIGHT_NEWS
+        w_rr = settings.WEIGHT_RISK_REWARD
+
+        buy_pts = 0.0
+        sell_pts = 0.0
+
+        # 1. Market Structure (20%)
+        if tech.market_structure:
+            if tech.market_structure.structure_bias == "BULLISH":
+                buy_pts += w_struct * 100.0 * (1.1 if tech.market_structure.break_of_structure else 1.0)
+            elif tech.market_structure.structure_bias == "BEARISH":
+                sell_pts += w_struct * 100.0 * (1.1 if tech.market_structure.break_of_structure else 1.0)
+            else:
+                buy_pts += w_struct * 45.0
+                sell_pts += w_struct * 45.0
+
+        # 2. HTF Trend (15%)
+        if mtf and "4h" in mtf.timeframes:
+            tf4h = mtf.timeframes["4h"]
+            if tf4h.trend == "BULLISH":
+                buy_pts += w_htf * 100.0
+            elif tf4h.trend == "BEARISH":
+                sell_pts += w_htf * 100.0
+            else:
+                buy_pts += w_htf * 50.0
+                sell_pts += w_htf * 50.0
+
+        # 3. Trend Indicators (10%) - EMA 20, 50, 100, 200 & ADX
+        if tech.ema_20 > tech.ema_50 and current_price > tech.ema_200:
+            buy_pts += w_trend * 100.0
+        elif tech.ema_20 < tech.ema_50 and current_price < tech.ema_200:
+            sell_pts += w_trend * 100.0
+        else:
+            buy_pts += w_trend * 40.0
+            sell_pts += w_trend * 40.0
+
+        # 4. Momentum (10%) - RSI & MACD & Stochastics
+        if tech.rsi >= 52 and tech.macd.histogram > 0:
+            buy_pts += w_mom * 100.0
+        elif tech.rsi <= 48 and tech.macd.histogram < 0:
+            sell_pts += w_mom * 100.0
+        else:
+            buy_pts += w_mom * 50.0
+            sell_pts += w_mom * 50.0
+
+        # 5. Multi-Timeframe Alignment (15%)
+        if mtf:
+            if mtf.alignment_state == "ALIGNED_BULLISH":
+                buy_pts += w_mtf * mtf.alignment_score
+            elif mtf.alignment_state == "ALIGNED_BEARISH":
+                sell_pts += w_mtf * mtf.alignment_score
+            else:
+                buy_pts += w_mtf * 40.0
+                sell_pts += w_mtf * 40.0
+
+        # 6. Support/Resistance & Headroom (10%)
+        if tech.sr_buffer:
+            if tech.sr_buffer.has_sufficient_headroom:
+                if tech.trend == "bullish":
+                    buy_pts += w_sr * 100.0
+                elif tech.trend == "bearish":
+                    sell_pts += w_sr * 100.0
+            else:
+                # Deduct points if entering directly into ceiling/floor!
+                if tech.trend == "bullish":
+                    buy_pts -= w_sr * 50.0
+                else:
+                    sell_pts -= w_sr * 50.0
+
+        # 7. Volatility & Regime (5%)
+        if tech.market_regime:
+            if tech.market_regime.regime in ["STRONG_TREND", "PULLBACK"]:
+                if tech.trend == "bullish":
+                    buy_pts += w_vol * 100.0
+                else:
+                    sell_pts += w_vol * 100.0
+            elif tech.market_regime.regime == "UNCERTAIN":
+                buy_pts *= 0.70
+                sell_pts *= 0.70
+
+        # 8. Volume Confirmation (5%)
+        if tech.volume_metrics and tech.volume_metrics.is_volume_confirmed:
+            if tech.trend == "bullish":
+                buy_pts += w_volume * 100.0
+            else:
+                sell_pts += w_volume * 100.0
+
+        # 9. News & Sentiment (5%)
+        if news_analysis and news_analysis.get("status") == "CONFIRMATION":
+            if news_analysis.get("news_bias") == "BULLISH":
+                buy_pts += w_news * 100.0
+            else:
+                sell_pts += w_news * 100.0
+        elif news_analysis and news_analysis.get("status") == "CONFLICT":
+            buy_pts -= w_news * 30.0
+            sell_pts -= w_news * 30.0
+
+        # 10. Risk/Reward (5%)
+        buy_pts += w_rr * 90.0
+        sell_pts += w_rr * 90.0
+
+        # If imminent high-impact event risk is detected -> discount both sides!
+        if event_risk and event_risk.get("news_risk") == "HIGH":
+            buy_pts *= 0.65
+            sell_pts *= 0.65
+
+        buy_score = round(max(0.0, min(98.0, buy_pts)), 1)
+        sell_score = round(max(0.0, min(98.0, sell_pts)), 1)
+
+        return {
+            "buy_score": buy_score,
+            "sell_score": sell_score,
+            "net_advantage": round(abs(buy_score - sell_score), 1)
+        }
+
     @classmethod
     def generate_signal(
         cls,
@@ -22,22 +169,43 @@ class SignalEngine:
         symbol = symbol.upper()
         market_provider = get_market_data_provider()
         
-        # 1. WAKE: Get candles and current market price
+        # 1. Fetch candles & current market price
         candles = market_provider.get_historical_candles(symbol, timeframe=timeframe, limit=120)
         current_price = market_provider.get_latest_price(symbol)
         
-        # Get asset metadata
         asset = db.query(Asset).filter(Asset.symbol == symbol).first()
         market_type = asset.market_type if asset else "crypto"
         precision = asset.precision if asset else 2
 
-        # 2. SCAN: Calculate technical indicators
+        # 2. Quantitative scan
         tech = TechnicalAnalysisService.analyze(symbol, timeframe, candles)
 
-        # 3. DEBATE: Multi-Agent Council
+        # 3. Multi-Timeframe Alignment Matrix
+        from app.api.routes.ai import compute_multi_timeframe_summary, calculate_trader_targets
+        mtf = compute_multi_timeframe_summary(symbol, market_provider)
+
+        # 4. News Sentiment & Imminent Event Risk
+        news_items = NewsService.get_news(db, language="en", symbol=symbol, limit=8)
+        news_sentiment = NewsService.calculate_news_sentiment_breakdown(symbol, news_items)
+        event_risk = NewsService.check_economic_event_risk(symbol)
+        news_confirm = NewsService.evaluate_news_technical_confirmation(
+            tech.trend, news_sentiment.get("bias", "NEUTRAL"), event_risk.get("news_risk", "LOW")
+        )
+        news_confirm["news_bias"] = news_sentiment.get("bias", "NEUTRAL")
+
+        # 5. Calculate Evidence-Based Confluence Scores across 10 Pillars
+        scores = cls.calculate_confluence_scores(tech, mtf, news_confirm, event_risk, current_price)
+        buy_score = scores["buy_score"]
+        sell_score = scores["sell_score"]
+        net_advantage = scores["net_advantage"]
+
+        # 6. Multi-Agent Council
         tech_vote = AIAgentAnalystCouncil.evaluate_technical(tech, current_price)
         macro_vote = AIAgentAnalystCouncil.evaluate_macro(symbol, market_type)
-        sentiment_vote = AIAgentAnalystCouncil.evaluate_sentiment(symbol)
+        sentiment_vote = AIAgentAnalystCouncil.evaluate_sentiment(
+            symbol,
+            [{"title": n.title, "summary": n.summary, "sentiment": {"sentiment": n.sentiment.sentiment if n.sentiment else "neutral"}} for n in news_items]
+        )
         risk_vote = AIAgentAnalystCouncil.evaluate_risk(symbol, current_price, tech, risk_level)
 
         votes = {
@@ -47,29 +215,65 @@ class SignalEngine:
             "risk": risk_vote
         }
 
-        consensus = AIAgentAnalystCouncil.synthesize_consensus(
-            symbol, timeframe, current_price, tech, votes, risk_level, analysis_mode
-        )
+        # 7. Strict Decision Engine (BUY / SELL / WAIT)
+        min_score = settings.SIGNAL_ENTRY_MIN_SCORE # 70.0
+        min_adv = settings.SIGNAL_MIN_DIRECTIONAL_ADVANTAGE # 25.0
 
-        direction = consensus.decision
+        if (
+            buy_score >= min_score
+            and buy_score > sell_score + min_adv
+            and not risk_vote.veto
+            and event_risk.get("news_risk") != "HIGH"
+            and tech.sr_buffer
+            and tech.sr_buffer.has_sufficient_headroom
+        ):
+            direction = "BUY"
+            confidence = buy_score
+            bias = "Bullish"
+        elif (
+            sell_score >= min_score
+            and sell_score > buy_score + min_adv
+            and not risk_vote.veto
+            and event_risk.get("news_risk") != "HIGH"
+            and tech.sr_buffer
+            and tech.sr_buffer.has_sufficient_headroom
+        ):
+            direction = "SELL"
+            confidence = sell_score
+            bias = "Bearish"
+        else:
+            direction = "NO_TRADE"
+            confidence = max(buy_score, sell_score)
+            bias = "Neutral / Consolidation"
+
         atr = tech.atr if tech.atr > 0 else (current_price * 0.01)
 
-        # 4. VALIDATE & CALCULATE ENTRY / SL / TP
-        if direction in ["BUY", "SELL"] and consensus.confidence >= 70.0:
+        # 8. Calculate Entry, SL, TP Goals
+        if direction in ["BUY", "SELL"]:
             entry = current_price
-            from app.api.routes.ai import calculate_trader_targets
             stop_loss, tp1, tp2, tp3, risk_reward, sl_dist, tp1_dist, tp2_dist, tp3_dist = calculate_trader_targets(
                 symbol, current_price, direction, atr, precision
             )
-        else: # NO_TRADE
+            move_sign = "+" if direction == "BUY" else "-"
+            reasoning = (
+                f"High-Conviction {direction} Signal ({confidence}% Confluence Score | Buy Score: {buy_score}, Sell Score: {sell_score}). "
+                f"Market Structure: {tech.market_structure.pattern if tech.market_structure else 'Trend'} with {mtf.alignment_score}% MTF synergy. "
+                f"Target Goals: TP1 ({move_sign}{tp1_dist:.2f} pts), TP2 ({move_sign}{tp2_dist:.2f} pts), TP3 ({move_sign}{tp3_dist:.2f} pts). "
+                f"News Confirmation: {news_confirm.get('status')} ({news_sentiment.get('bullish')}% Bullish Sentiment). "
+                f"SR Clearance: {tech.sr_buffer.verdict if tech.sr_buffer else 'Clear headroom'}."
+            )
+        else:
             entry = None
             stop_loss = None
             tp1 = None
             tp2 = None
             tp3 = None
             risk_reward = 0.0
+            reasoning = (
+                f"STAND ASIDE & WAIT (Confluence Score: {confidence}% | Buy: {buy_score}, Sell: {sell_score}, Net Advantage: {net_advantage} pts). "
+                f"{event_risk.get('warning') if event_risk.get('news_risk') == 'HIGH' else tech.sr_buffer.verdict if (tech.sr_buffer and not tech.sr_buffer.has_sufficient_headroom) else 'Directional advantage is below institutional threshold (minimum 70% score + 25 pts edge required).'}"
+            )
 
-        # Save to database
         now = datetime.datetime.utcnow()
         signal = Signal(
             symbol=symbol,
@@ -81,13 +285,13 @@ class SignalEngine:
             take_profit_1=tp1,
             take_profit_2=tp2,
             take_profit_3=tp3,
-            confidence=consensus.confidence,
+            confidence=confidence,
             risk_reward=risk_reward,
-            bias=consensus.market_bias,
+            bias=bias,
             technical_summary=tech.summary,
-            sentiment_summary=sentiment_vote.reasoning,
+            sentiment_summary=f"Sentiment: {news_sentiment.get('bias')} ({news_sentiment.get('bullish')}% Bullish / {news_sentiment.get('bearish')}% Bearish). {news_confirm.get('reasoning')}",
             risk_assessment=risk_vote.reasoning,
-            reasoning=consensus.reasons[0] if consensus.reasons else "Market council assessment completed.",
+            reasoning=reasoning,
             analyst_votes_json={k: v.dict() for k, v in votes.items()},
             status="ACTIVE" if direction != "NO_TRADE" else "NO_TRADE",
             is_pro_only=is_pro_only,
@@ -140,7 +344,7 @@ class SignalEngine:
                 elif current_price >= sig.take_profit_1 and sig.status != "TP1_HIT":
                     sig.status = "TP1_HIT"
                     changed = True
-                    
+
             elif sig.direction == "SELL":
                 if current_price >= sig.stop_loss:
                     sig.status = "SL_HIT"
@@ -165,62 +369,38 @@ class SignalEngine:
                     sig.status = "TP1_HIT"
                     changed = True
 
-            # Check expiration after 48 hours
-            if not changed and (now - sig.created_at).total_seconds() > 172800:
-                sig.status = "EXPIRED"
-                sig.closed_at = now
-                sig.exit_price = current_price
-                outcome = "EXPIRED"
-                changed = True
-
             if changed:
                 if outcome:
-                    dur_min = int((now - sig.created_at).total_seconds() / 60)
-                    sig_outcome = SignalOutcome(
+                    signal_outcome = SignalOutcome(
                         signal_id=sig.id,
-                        symbol=sig.symbol,
                         outcome=outcome,
                         pnl_r=sig.pnl_r,
-                        pnl_pct=sig.pnl_percentage,
-                        duration_minutes=dur_min,
-                        recorded_at=now
+                        pnl_percentage=sig.pnl_percentage,
+                        exit_price=sig.exit_price,
+                        exit_time=now,
+                        notes=f"Signal automatically closed on {sig.status}."
                     )
-                    db.add(sig_outcome)
+                    db.add(signal_outcome)
                 
-                updates.append({"id": sig.id, "symbol": sig.symbol, "status": sig.status})
-
-        if updates:
-            db.commit()
-            logger.info(f"Signal lifecycle evaluation updated {len(updates)} signals.")
+                db.commit()
+                updates.append({"signal_id": sig.id, "symbol": sig.symbol, "new_status": sig.status})
 
         return updates
 
     @classmethod
-    def auto_scan_and_generate_signals(cls, db: Session, target_count: int = 5) -> List[Signal]:
+    def auto_scan_and_generate_signals(cls, db: Session, target_count: int = 3):
         """
-        Autonomous market scanner: Scans all benchmarks and timeframes.
-        Generates and publishes verified signals based on real strategy and council debate.
+        Background automated high-probability scanner:
+        Scans global benchmark assets and persists top verified setups.
         """
-        symbols = [
-            "XAUUSD", "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT",
-            "EURUSD", "GBPUSD", "USDJPY", "USOIL", "UKOIL",
-            "NVDA", "AAPL", "TSLA", "NAS100", "US30"
-        ]
-        timeframes = ["15m", "1h", "4h", "1d"]
-        generated = []
-
-        for sym in symbols:
-            if len(generated) >= target_count:
+        assets = ["XAUUSD", "BTCUSDT", "ETHUSDT", "SOLUSDT", "EURUSD", "GBPUSD", "USDJPY", "USOIL", "NVDA", "NAS100"]
+        generated = 0
+        for sym in assets:
+            if generated >= target_count:
                 break
-            for tf in timeframes:
-                if len(generated) >= target_count:
-                    break
-                try:
-                    sig = cls.generate_signal(db, symbol=sym, timeframe=tf, risk_level="Medium", is_pro_only=False)
-                    if sig.direction != "NO_TRADE":
-                        generated.append(sig)
-                except Exception as e:
-                    logger.error(f"Error auto-scanning {sym} ({tf}): {e}")
-
-        logger.info(f"Auto-scan generated {len(generated)} verified market signals.")
-        return generated
+            try:
+                sig = cls.generate_signal(db, symbol=sym, timeframe="1h")
+                if sig.direction in ["BUY", "SELL"]:
+                    generated += 1
+            except Exception as e:
+                logger.error(f"Error auto-generating signal for {sym}: {e}")

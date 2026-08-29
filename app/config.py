@@ -50,6 +50,22 @@ class Settings(BaseSettings):
     # MT5 Execution Bridge
     MT5_LIVE_TRADING: bool = False
 
+    # Centralized Signal Engine Scoring Model Configurable Weights
+    WEIGHT_MARKET_STRUCTURE: float = 0.20
+    WEIGHT_HTF_TREND: float = 0.15
+    WEIGHT_TREND_INDICATORS: float = 0.10
+    WEIGHT_MOMENTUM: float = 0.10
+    WEIGHT_MULTI_TIMEFRAME: float = 0.15
+    WEIGHT_SUPPORT_RESISTANCE: float = 0.10
+    WEIGHT_VOLATILITY: float = 0.05
+    WEIGHT_VOLUME: float = 0.05
+    WEIGHT_NEWS: float = 0.05
+    WEIGHT_RISK_REWARD: float = 0.05
+
+    # Minimum Decision Thresholds
+    SIGNAL_ENTRY_MIN_SCORE: float = 70.0
+    SIGNAL_MIN_DIRECTIONAL_ADVANTAGE: float = 25.0
+
     @property
     def cors_origins_list(self) -> List[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
