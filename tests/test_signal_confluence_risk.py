@@ -1,4 +1,3 @@
-import pytest
 from app.services.news_service import NewsService
 from app.api.routes.ai import calculate_trader_targets
 

@@ -1,4 +1,3 @@
-import pytest
 from app.services.technical_analysis import TechnicalAnalysisService
 
 def test_market_structure_bullish_progression():

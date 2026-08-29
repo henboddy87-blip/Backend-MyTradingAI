@@ -1,4 +1,3 @@
-import pytest
 from app.services.technical_analysis import TechnicalAnalysisService
 
 def test_ema_and_sma_calculations():
