@@ -453,6 +453,9 @@ class TechnicalAnalysisService:
             recommendation=rec
         )
 
+    _cache: Dict[str, Tuple[float, Any]] = {}
+    _CACHE_TTL_SECONDS: float = 15.0
+
     @classmethod
     def analyze(cls, symbol: str, timeframe: str, candles: List[Dict[str, Any]]) -> TechnicalAnalysisResult:
         now = datetime.now(timezone.utc)
@@ -481,6 +484,16 @@ class TechnicalAnalysisService:
                 summary="Insufficient candle data for quantitative scan.",
                 timestamp=now
             )
+
+        # Check in-memory calculation cache
+        latest_c = candles[-1]
+        cache_key = f"{symbol.upper()}_{timeframe.lower()}_{latest_c.get('time', '')}_{latest_c.get('close', '')}_{len(candles)}"
+        now_ts = now.timestamp()
+
+        if cache_key in cls._cache:
+            cached_time, cached_result = cls._cache[cache_key]
+            if (now_ts - cached_time) < cls._CACHE_TTL_SECONDS:
+                return cached_result
 
         closes = [c["close"] for c in candles]
         current_close = closes[-1]
@@ -570,7 +583,7 @@ class TechnicalAnalysisService:
             f"SR Headroom: {sr_buf.verdict}"
         )
 
-        return TechnicalAnalysisResult(
+        res = TechnicalAnalysisResult(
             symbol=symbol,
             timeframe=timeframe,
             trend=trend,
@@ -599,3 +612,10 @@ class TechnicalAnalysisService:
             summary=summary,
             timestamp=now
         )
+
+        cls._cache[cache_key] = (now_ts, res)
+        # Limit cache size to 200 entries
+        if len(cls._cache) > 200:
+            cls._cache.pop(next(iter(cls._cache)))
+
+        return res

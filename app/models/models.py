@@ -163,12 +163,12 @@ class News(Base):
     content = Column(Text, nullable=True)
     source = Column(String(100), default="Financial Wire")
     url = Column(String(255), nullable=True)
-    language = Column(String(10), default="en") # en, km
-    category = Column(String(50), default="General") # Crypto, Forex, Commodities, Central Banks
-    impact = Column(String(20), default="MEDIUM") # HIGH, MEDIUM, LOW
+    language = Column(String(10), default="en", index=True) # en, km
+    category = Column(String(50), default="General", index=True) # Crypto, Forex, Commodities, Central Banks
+    impact = Column(String(20), default="MEDIUM", index=True) # HIGH, MEDIUM, LOW
     affected_symbols_json = Column(JSON, default=list)
-    published_at = Column(DateTime, default=datetime.datetime.utcnow)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    published_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
 
     sentiment = relationship("NewsSentiment", back_populates="news", uselist=False, cascade="all, delete-orphan")
 
@@ -177,7 +177,7 @@ class NewsSentiment(Base):
     __tablename__ = "news_sentiments"
 
     id = Column(Integer, primary_key=True, index=True)
-    news_id = Column(Integer, ForeignKey("news.id", ondelete="CASCADE"), nullable=False)
+    news_id = Column(Integer, ForeignKey("news.id", ondelete="CASCADE"), nullable=False, index=True)
     sentiment = Column(String(20), default="neutral") # positive, negative, neutral
     score = Column(Float, default=0.0) # -1.0 to 1.0
     confidence = Column(Float, default=70.0) # 0 to 100
@@ -192,14 +192,14 @@ class Signal(Base):
     id = Column(Integer, primary_key=True, index=True)
     symbol = Column(String(20), index=True, nullable=False)
     market_type = Column(String(30), default="crypto")
-    timeframe = Column(String(10), default="1h")
-    direction = Column(String(10), nullable=False) # BUY, SELL, NO_TRADE
+    timeframe = Column(String(10), default="1h", index=True)
+    direction = Column(String(10), nullable=False, index=True) # BUY, SELL, NO_TRADE
     entry = Column(Float, nullable=True)
     stop_loss = Column(Float, nullable=True)
     take_profit_1 = Column(Float, nullable=True)
     take_profit_2 = Column(Float, nullable=True)
     take_profit_3 = Column(Float, nullable=True)
-    confidence = Column(Float, default=0.0)
+    confidence = Column(Float, default=0.0, index=True)
     risk_reward = Column(Float, default=0.0)
     bias = Column(String(20), default="neutral")
     technical_summary = Column(Text, nullable=True)
@@ -210,7 +210,7 @@ class Signal(Base):
     status = Column(String(20), default="ACTIVE", index=True) # ACTIVE, TP1_HIT, TP2_HIT, TP3_HIT, SL_HIT, EXPIRED, CANCELLED, NO_TRADE
     is_pro_only = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
-    published_at = Column(DateTime, default=datetime.datetime.utcnow)
+    published_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
     closed_at = Column(DateTime, nullable=True)
     exit_price = Column(Float, nullable=True)
     pnl_r = Column(Float, default=0.0)
@@ -223,13 +223,13 @@ class SignalOutcome(Base):
     __tablename__ = "signal_outcomes"
 
     id = Column(Integer, primary_key=True, index=True)
-    signal_id = Column(Integer, ForeignKey("signals.id", ondelete="CASCADE"), nullable=False)
-    symbol = Column(String(20), nullable=False)
-    outcome = Column(String(20), nullable=False) # WIN, LOSS, BREAKEVEN, EXPIRED, CANCELLED
+    signal_id = Column(Integer, ForeignKey("signals.id", ondelete="CASCADE"), nullable=False, index=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    outcome = Column(String(20), nullable=False, index=True) # WIN, LOSS, BREAKEVEN, EXPIRED, CANCELLED
     pnl_r = Column(Float, default=0.0)
     pnl_pct = Column(Float, default=0.0)
     duration_minutes = Column(Integer, default=0)
-    recorded_at = Column(DateTime, default=datetime.datetime.utcnow)
+    recorded_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
 
     signal = relationship("Signal", back_populates="outcomes")
 
@@ -238,8 +238,8 @@ class TradeJournal(Base):
     __tablename__ = "trade_journals"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    symbol = Column(String(20), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    symbol = Column(String(20), nullable=False, index=True)
     direction = Column(String(10), nullable=False) # BUY, SELL
     timeframe = Column(String(10), default="1h")
     entry_price = Column(Float, nullable=False)
@@ -253,8 +253,8 @@ class TradeJournal(Base):
     notes = Column(Text, nullable=True)
     screenshot_url = Column(String(255), nullable=True)
     tags = Column(String(100), nullable=True)
-    trade_date = Column(DateTime, default=datetime.datetime.utcnow)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    trade_date = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
     user = relationship("User", back_populates="journal_entries")
