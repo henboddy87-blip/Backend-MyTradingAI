@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional, Literal
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from app.core.database import get_db
-from app.auth.dependencies import get_current_user, get_current_active_user
+from app.auth.dependencies import get_current_user, get_optional_user, get_current_active_user
 from app.models.models import User, AiConversation, AiMessage, Asset
 from app.schemas.schemas import (
     AIAnalyzeRequest, AIAnalyzeResponse,
@@ -171,7 +171,7 @@ def get_economic_events(symbol: str) -> List[EconomicEventItem]:
 async def analyze_market_setup(
     req: AIAnalyzeRequest,
     db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(get_current_user)
+    current_user: Optional[User] = Depends(get_optional_user)
 ):
     symbol = req.symbol.upper()
     market_provider = get_market_data_provider()
@@ -353,7 +353,7 @@ async def analyze_market_setup(
 @router.post("/best-setup")
 async def get_best_market_setup(
     db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(get_current_user)
+    current_user: Optional[User] = Depends(get_optional_user)
 ):
     """
     Scans 15 global benchmarks across multiple timeframes (1h, 15m, 4h).

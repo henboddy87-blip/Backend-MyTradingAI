@@ -3,7 +3,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from app.core.database import get_db
-from app.auth.dependencies import get_current_user, get_current_admin_user, get_user_plan_code
+from app.auth.dependencies import get_current_user, get_optional_user, get_current_admin_user, get_user_plan_code
 from app.models.models import Signal, User
 from app.schemas.schemas import SignalOut, SignalCreate, SignalUpdate, AIAnalyzeResponse
 from app.services.signal_engine import SignalEngine
@@ -19,7 +19,7 @@ def get_signals(
     direction: Optional[str] = None,
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db)
 ):
     query = db.query(Signal)
@@ -39,7 +39,7 @@ def get_signals(
 @router.get("/{id}", response_model=SignalOut)
 def get_signal(
     id: int,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db)
 ):
     s = db.query(Signal).filter(Signal.id == id).first()
@@ -54,7 +54,7 @@ async def generate_live_signal(
     timeframe: str = Query("1h"),
     risk_level: str = Query("Medium"),
     is_pro_only: bool = Query(False),
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db)
 ):
     """Generates an institutional AI signal on demand from live exchange market data."""
@@ -111,7 +111,7 @@ async def analyze_and_publish(
 @router.post("/publish-from-analysis", response_model=SignalOut)
 async def publish_from_analysis(
     req: AIAnalyzeResponse,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db)
 ):
     if req.direction == "NO_TRADE" or not req.entry:
@@ -153,7 +153,7 @@ async def publish_from_analysis(
 @router.post("/", response_model=SignalOut, status_code=status.HTTP_201_CREATED)
 def create_custom_signal(
     req: SignalCreate,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db)
 ):
     from app.models.models import Asset
@@ -193,7 +193,7 @@ def create_custom_signal(
 def update_signal(
     id: int,
     req: SignalUpdate,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db)
 ):
     sig = db.query(Signal).filter(Signal.id == id).first()
@@ -224,7 +224,7 @@ def update_signal(
 @router.delete("/{id}")
 def delete_signal(
     id: int,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db)
 ):
     sig = db.query(Signal).filter(Signal.id == id).first()
@@ -236,7 +236,7 @@ def delete_signal(
 
 @router.post("/clear-all")
 def clear_all_signals(
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -249,7 +249,7 @@ def clear_all_signals(
 @router.post("/auto-generate", response_model=List[SignalOut])
 def auto_generate_market_signals(
     count: int = Query(5, ge=1, le=30, description="Number of signals to generate (5, 20, or 30)"),
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db)
 ):
     signals = SignalEngine.auto_scan_and_generate_signals(db, target_count=count)

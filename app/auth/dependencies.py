@@ -69,6 +69,41 @@ def get_current_user(
 
     return user
 
+def get_optional_user(
+    token: Optional[str] = Depends(oauth2_scheme),
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+) -> Optional[User]:
+    auth_token = token
+    if not auth_token and authorization and authorization.startswith("Bearer "):
+        auth_token = authorization.split("Bearer ")[1].strip()
+
+    if not auth_token:
+        return None
+
+    try:
+        if auth_token.startswith("mta_"):
+            key_hash = hash_api_key(auth_token)
+            api_key = db.query(ApiKey).filter(
+                ApiKey.key_hash == key_hash,
+                ApiKey.revoked_at.is_(None)
+            ).first()
+            if not api_key:
+                return None
+            user = db.query(User).filter(User.id == api_key.user_id).first()
+            return user if user and user.is_active else None
+
+        payload = decode_token(auth_token)
+        if not payload:
+            return None
+        user_id = payload.get("sub")
+        if not user_id:
+            return None
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        return user if user and user.is_active else None
+    except Exception:
+        return None
+
 def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
     if not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user account")
