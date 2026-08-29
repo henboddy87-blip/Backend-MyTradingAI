@@ -69,6 +69,8 @@ async def add_process_time_and_id(request: Request, call_next):
 # Include Routers
 app.include_router(api_router)
 app.include_router(mcp_router)
+from app.api.routes.websocket import router as ws_router
+app.include_router(ws_router)
 
 @app.get("/")
 def root():

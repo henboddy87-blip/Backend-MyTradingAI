@@ -2,7 +2,7 @@ from fastapi import APIRouter
 from app.api.routes import (
     auth, market, technical, signals, ai, risk, journal,
     watchlist, news, track_record, subscriptions, api_keys,
-    telegram, mt5, admin, mcp
+    telegram, mt5, admin, mcp, websocket
 )
 
 api_router = APIRouter(prefix="/api/v1")
