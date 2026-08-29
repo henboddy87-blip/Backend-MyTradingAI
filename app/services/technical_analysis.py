@@ -1,37 +1,40 @@
 import math
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, Optional, Sequence, Union
 from datetime import datetime, timezone
 from app.schemas.schemas import (
     TechnicalAnalysisResult, MACDResult, BollingerBandsResult,
     MarketStructureResult, MarketRegimeResult, MultiTimeframeSummary,
     TimeframeAlignment, ConfidenceScoreBreakdown, SignalInvalidation,
-    IndicatorEvidence, VolumeMetrics, SupportResistanceBuffer
+    IndicatorEvidence, VolumeMetrics, SupportResistanceBuffer,
+    PivotLevels, PivotPointsResult, TechnicalGaugeScore, TechnicalGaugeResult,
+    CandlePatternResult, OrderBlockResult, FairValueGapResult,
+    LiquiditySweepResult, SmartMoneyConceptsResult
 )
 
 class TechnicalAnalysisService:
     @staticmethod
-    def calculate_ema(prices: List[float], period: int) -> float:
+    def calculate_ema(prices: Sequence[Union[float, int]], period: int) -> float:
         if not prices or len(prices) < period:
-            return prices[-1] if prices else 0.0
+            return float(prices[-1]) if prices else 0.0
         k = 2.0 / (period + 1.0)
-        ema = sum(prices[:period]) / period
+        ema = float(sum(prices[:period])) / period
         for price in prices[period:]:
-            ema = (price * k) + (ema * (1.0 - k))
+            ema = (float(price) * k) + (ema * (1.0 - k))
         return round(ema, 4)
 
     @staticmethod
-    def calculate_sma(prices: List[float], period: int) -> float:
+    def calculate_sma(prices: Sequence[Union[float, int]], period: int) -> float:
         if not prices or len(prices) < period:
-            return prices[-1] if prices else 0.0
-        return round(sum(prices[-period:]) / period, 4)
+            return float(prices[-1]) if prices else 0.0
+        return round(float(sum(prices[-period:])) / period, 4)
 
     @staticmethod
-    def calculate_rsi(prices: List[float], period: int = 14) -> float:
+    def calculate_rsi(prices: Sequence[Union[float, int]], period: int = 14) -> float:
         if len(prices) < period + 1:
             return 50.0
         gains, losses = [], []
         for i in range(1, len(prices)):
-            diff = prices[i] - prices[i - 1]
+            diff = float(prices[i]) - float(prices[i - 1])
             if diff >= 0:
                 gains.append(diff)
                 losses.append(0.0)
@@ -53,7 +56,7 @@ class TechnicalAnalysisService:
         return round(rsi, 2)
 
     @staticmethod
-    def calculate_macd(prices: List[float], fast: int = 12, slow: int = 26, signal_period: int = 9) -> MACDResult:
+    def calculate_macd(prices: Sequence[Union[float, int]], fast: int = 12, slow: int = 26, signal_period: int = 9) -> MACDResult:
         if len(prices) < slow + signal_period:
             return MACDResult(value=0.0, signal=0.0, histogram=0.0)
         
@@ -108,12 +111,12 @@ class TechnicalAnalysisService:
         return round(atr, 4)
 
     @staticmethod
-    def calculate_bollinger_bands(prices: List[float], period: int = 20, num_std: float = 2.0) -> BollingerBandsResult:
+    def calculate_bollinger_bands(prices: Sequence[Union[float, int]], period: int = 20, num_std: float = 2.0) -> BollingerBandsResult:
         if len(prices) < period:
-            p = prices[-1] if prices else 0.0
+            p = float(prices[-1]) if prices else 0.0
             return BollingerBandsResult(upper=p, middle=p, lower=p)
         
-        recent = prices[-period:]
+        recent = [float(x) for x in prices[-period:]]
         sma = sum(recent) / period
         variance = sum((x - sma) ** 2 for x in recent) / period
         std_dev = math.sqrt(variance)
@@ -399,22 +402,30 @@ class TechnicalAnalysisService:
         structure: MarketStructureResult
     ) -> MarketRegimeResult:
         """
-        Classifies Market Regime:
+        Classifies Market Regime with Phase 4 Volatility Squeeze Detection:
         - STRONG_TREND: High ADX (>25), clear EMA stacking, structure alignment
         - WEAK_TREND: Mild slope, ADX 18-25
         - RANGE: ADX < 18, price oscillating near BB middle
-        - BREAKOUT: Price piercing BB bands with expansion
+        - BREAKOUT / SQUEEZE_EXPANSION: Price piercing BB bands with Keltner expansion
+        - SQUEEZE_COMPRESSION: Bollinger Bands contracted inside Keltner Channels (Energy coiling)
         - PULLBACK: Trend intact but short-term counter-move to EMA 20/50 support
         - HIGH_VOLATILITY: ATR expansion or extreme BB width
-        - UNCERTAIN: Conflicting signals, no clear direction
         """
         bb_width = ((bb.upper - bb.lower) / bb.middle) if bb.middle > 0 else 0.0
+        keltner_upper = ema_20 + (1.5 * atr)
+        keltner_lower = ema_20 - (1.5 * atr)
+        is_squeeze = (bb.lower > keltner_lower) and (bb.upper < keltner_upper)
 
-        if current_close > bb.upper or current_close < bb.lower:
+        if is_squeeze:
+            regime = "RANGE"
+            confidence = 85.0
+            volatility_state = "COMPRESSING"
+            rec = "TTM Volatility Squeeze active: Price coiling tightly inside Keltner channel. Prepare for high-velocity breakout."
+        elif current_close > bb.upper or current_close < bb.lower:
             regime = "BREAKOUT"
-            confidence = 88.0
+            confidence = 89.0
             volatility_state = "EXPANDING"
-            rec = "Wait for breakout confirmation candle or first pullback retest."
+            rec = "Volatility Expansion underway: Bands piercing outer channel. Ride momentum with trailing stops."
         elif adx >= 28 and ((current_close > ema_20 > ema_50) or (current_close < ema_20 < ema_50)):
             regime = "STRONG_TREND"
             confidence = 92.0
@@ -619,3 +630,627 @@ class TechnicalAnalysisService:
             cls._cache.pop(next(iter(cls._cache)))
 
         return res
+
+    @staticmethod
+    def calculate_pivot_points(candles: List[Dict[str, Any]]) -> PivotPointsResult:
+        """Calculates Classic, Fibonacci, and Camarilla Pivot Points based on recent candle range"""
+        if not candles:
+            dummy = PivotLevels(pivot=0, r1=0, r2=0, r3=0, s1=0, s2=0, s3=0)
+            return PivotPointsResult(classic=dummy, fibonacci=dummy, camarilla=dummy)
+
+        # Look at last completed session / range (up to last 24 candles or 1-day range)
+        subset = candles[-24:] if len(candles) >= 24 else candles
+        high = max(c["high"] for c in subset)
+        low = min(c["low"] for c in subset)
+        close = subset[-1]["close"]
+        diff = high - low
+
+        # Classic
+        p_classic = (high + low + close) / 3.0
+        classic = PivotLevels(
+            pivot=round(p_classic, 2),
+            r1=round(2 * p_classic - low, 2),
+            r2=round(p_classic + diff, 2),
+            r3=round(high + 2 * (p_classic - low), 2),
+            s1=round(2 * p_classic - high, 2),
+            s2=round(p_classic - diff, 2),
+            s3=round(low - 2 * (high - p_classic), 2),
+        )
+
+        # Fibonacci
+        fib = PivotLevels(
+            pivot=round(p_classic, 2),
+            r1=round(p_classic + 0.382 * diff, 2),
+            r2=round(p_classic + 0.618 * diff, 2),
+            r3=round(p_classic + 1.000 * diff, 2),
+            s1=round(p_classic - 0.382 * diff, 2),
+            s2=round(p_classic - 0.618 * diff, 2),
+            s3=round(p_classic - 1.000 * diff, 2),
+        )
+
+        # Camarilla
+        cam = PivotLevels(
+            pivot=round(p_classic, 2),
+            r1=round(close + diff * 1.1 / 12.0, 2),
+            r2=round(close + diff * 1.1 / 6.0, 2),
+            r3=round(close + diff * 1.1 / 4.0, 2),
+            s1=round(close - diff * 1.1 / 12.0, 2),
+            s2=round(close - diff * 1.1 / 6.0, 2),
+            s3=round(close - diff * 1.1 / 4.0, 2),
+        )
+
+        return PivotPointsResult(classic=classic, fibonacci=fib, camarilla=cam)
+
+    @staticmethod
+    def detect_candlestick_patterns(candles: List[Dict[str, Any]]) -> List[CandlePatternResult]:
+        """Detects high-probability institutional candlestick patterns on the latest candles"""
+        patterns = []
+        if len(candles) < 3:
+            return patterns
+
+        c1 = candles[-3]
+        c2 = candles[-2]
+        c3 = candles[-1]
+
+        body3 = abs(c3["close"] - c3["open"])
+        range3 = c3["high"] - c3["low"]
+        upper_wick3 = c3["high"] - max(c3["open"], c3["close"])
+        lower_wick3 = min(c3["open"], c3["close"]) - c3["low"]
+
+        # 1. Bullish Engulfing
+        if c2["close"] < c2["open"] and c3["close"] > c3["open"] and c3["close"] >= c2["open"] and c3["open"] <= c2["close"]:
+            patterns.append(CandlePatternResult(
+                pattern_name="Bullish Engulfing",
+                pattern_type="BULLISH",
+                significance="HIGH",
+                description="Strong buying absorption engulfing prior selling candle. High probability reversal."
+            ))
+
+        # 2. Bearish Engulfing
+        if c2["close"] > c2["open"] and c3["close"] < c3["open"] and c3["close"] <= c2["open"] and c3["open"] >= c2["close"]:
+            patterns.append(CandlePatternResult(
+                pattern_name="Bearish Engulfing",
+                pattern_type="BEARISH",
+                significance="HIGH",
+                description="Aggressive selling pressure engulfing prior bullish candle."
+            ))
+
+        # 3. Hammer / Bullish Pinbar
+        if range3 > 0 and (lower_wick3 >= 2.0 * body3) and (upper_wick3 <= 0.25 * range3):
+            patterns.append(CandlePatternResult(
+                pattern_name="Hammer (Demand Rejection)",
+                pattern_type="BULLISH",
+                significance="MEDIUM",
+                description="Significant lower shadow showing aggressive buyer defense at lows."
+            ))
+
+        # 4. Shooting Star / Bearish Pinbar
+        if range3 > 0 and (upper_wick3 >= 2.0 * body3) and (lower_wick3 <= 0.25 * range3):
+            patterns.append(CandlePatternResult(
+                pattern_name="Shooting Star (Supply Rejection)",
+                pattern_type="BEARISH",
+                significance="MEDIUM",
+                description="Strong rejection from highs. Sellers defended upper resistance."
+            ))
+
+        # 5. Morning Star
+        if (c1["close"] < c1["open"] and
+            abs(c2["close"] - c2["open"]) < 0.3 * (c1["high"] - c1["low"]) and
+            c3["close"] > c3["open"] and
+            c3["close"] > (c1["open"] + c1["close"]) / 2):
+            patterns.append(CandlePatternResult(
+                pattern_name="Morning Star",
+                pattern_type="BULLISH",
+                significance="HIGH",
+                description="3-Bar reversal cluster confirming transition from exhaustion to expansion."
+            ))
+
+        # 6. Evening Star
+        if (c1["close"] > c1["open"] and
+            abs(c2["close"] - c2["open"]) < 0.3 * (c1["high"] - c1["low"]) and
+            c3["close"] < c3["open"] and
+            c3["close"] < (c1["open"] + c1["close"]) / 2):
+            patterns.append(CandlePatternResult(
+                pattern_name="Evening Star",
+                pattern_type="BEARISH",
+                significance="HIGH",
+                description="3-Bar top reversal cluster indicating heavy distribution."
+            ))
+
+        # 7. Doji (Indecision)
+        if range3 > 0 and (body3 / range3) < 0.10:
+            patterns.append(CandlePatternResult(
+                pattern_name="Doji (Market Indecision)",
+                pattern_type="NEUTRAL",
+                significance="LOW",
+                description="Equilibrium between buyers and sellers awaiting directional catalyst."
+            ))
+
+        if not patterns:
+            patterns.append(CandlePatternResult(
+                pattern_name="Trend Continuity Bar",
+                pattern_type="BULLISH" if c3["close"] >= c3["open"] else "BEARISH",
+                significance="LOW",
+                description="Price action expanding within prevailing structural order flow."
+            ))
+
+        return patterns
+
+    @staticmethod
+    def detect_order_blocks(candles: List[Dict[str, Any]], timeframe: str = "1h") -> List[OrderBlockResult]:
+        """Detects institutional Order Blocks (OBs) - last down/up candles before strong directional expansion"""
+        order_blocks = []
+        if len(candles) < 10:
+            return order_blocks
+
+        for i in range(len(candles) - 6, len(candles) - 2):
+            c_curr = candles[i]
+            c_next = candles[i + 1]
+            c_after = candles[i + 2]
+
+            # Bullish Order Block (last bearish candle before sharp upward rally)
+            if (c_curr["close"] < c_curr["open"] and
+                c_next["close"] > c_next["open"] and
+                c_after["close"] > c_curr["high"] and
+                (c_next["close"] - c_next["open"]) > (c_curr["open"] - c_curr["close"]) * 1.5):
+                # Check if mitigated
+                is_mit = any(candles[j]["low"] < c_curr["low"] for j in range(i + 3, len(candles)))
+                order_blocks.append(OrderBlockResult(
+                    block_type="BULLISH_DEMAND",
+                    price_high=c_curr["high"],
+                    price_low=c_curr["low"],
+                    timeframe=timeframe,
+                    is_mitigated=is_mit
+                ))
+
+            # Bearish Order Block (last bullish candle before sharp downward plunge)
+            if (c_curr["close"] > c_curr["open"] and
+                c_next["close"] < c_next["open"] and
+                c_after["close"] < c_curr["low"] and
+                (c_next["open"] - c_next["close"]) > (c_curr["close"] - c_curr["open"]) * 1.5):
+                is_mit = any(candles[j]["high"] > c_curr["high"] for j in range(i + 3, len(candles)))
+                order_blocks.append(OrderBlockResult(
+                    block_type="BEARISH_SUPPLY",
+                    price_high=c_curr["high"],
+                    price_low=c_curr["low"],
+                    timeframe=timeframe,
+                    is_mitigated=is_mit
+                ))
+
+        return order_blocks[-4:]
+
+    @staticmethod
+    def detect_fair_value_gaps(candles: List[Dict[str, Any]], timeframe: str = "1h") -> List[FairValueGapResult]:
+        """
+        Detects institutional 3-candle Fair Value Gaps (FVG / Imbalances):
+        - Bullish FVG: Candle 3 Low > Candle 1 High (Unfilled upward liquidity void)
+        - Bearish FVG: Candle 3 High < Candle 1 Low (Unfilled downward liquidity void)
+        - Midpoint (CE - Consequent Encroachment): 50% retest target
+        """
+        fvgs = []
+        if len(candles) < 4:
+            return fvgs
+
+        for i in range(1, len(candles) - 1):
+            c1 = candles[i - 1]
+            c2 = candles[i]
+            c3 = candles[i + 1]
+
+            # Bullish FVG
+            if c2["close"] > c2["open"] and c3["low"] > c1["high"]:
+                gap_top = round(float(c3["low"]), 4)
+                gap_bottom = round(float(c1["high"]), 4)
+                ce = round((gap_top + gap_bottom) / 2.0, 4)
+                # Check if mitigated by any subsequent candle
+                is_mitigated = any(candles[j]["low"] <= gap_bottom for j in range(i + 2, len(candles)))
+                fvgs.append(FairValueGapResult(
+                    fvg_type="BULLISH_FVG",
+                    top=gap_top,
+                    bottom=gap_bottom,
+                    midpoint=ce,
+                    timeframe=timeframe,
+                    is_mitigated=is_mitigated,
+                    description=f"Bullish Imbalance [${gap_bottom:.2f} - ${gap_top:.2f}] with 50% CE @ ${ce:.2f}"
+                ))
+
+            # Bearish FVG
+            elif c2["close"] < c2["open"] and c3["high"] < c1["low"]:
+                gap_top = round(float(c1["low"]), 4)
+                gap_bottom = round(float(c3["high"]), 4)
+                ce = round((gap_top + gap_bottom) / 2.0, 4)
+                # Check if mitigated by any subsequent candle
+                is_mitigated = any(candles[j]["high"] >= gap_top for j in range(i + 2, len(candles)))
+                fvgs.append(FairValueGapResult(
+                    fvg_type="BEARISH_FVG",
+                    top=gap_top,
+                    bottom=gap_bottom,
+                    midpoint=ce,
+                    timeframe=timeframe,
+                    is_mitigated=is_mitigated,
+                    description=f"Bearish Imbalance [${gap_bottom:.2f} - ${gap_top:.2f}] with 50% CE @ ${ce:.2f}"
+                ))
+
+        return fvgs[-5:]
+
+    @staticmethod
+    def detect_liquidity_sweeps(candles: List[Dict[str, Any]], timeframe: str = "1h") -> List[LiquiditySweepResult]:
+        """
+        Detects institutional Liquidity Sweeps / Stop Runs:
+        - Buy-Side Liquidity (BSL) Sweep: Wick spikes above swing high but closes back below (Bull Trap)
+        - Sell-Side Liquidity (SSL) Sweep: Wick spikes below swing low but closes back above (Bear Trap)
+        """
+        sweeps = []
+        if len(candles) < 15:
+            return sweeps
+
+        # Identify recent swing highs and swing lows (lookback 10 candles)
+        for i in range(10, len(candles) - 1):
+            prior_highs = [candles[j]["high"] for j in range(max(0, i - 8), i)]
+            prior_lows = [candles[j]["low"] for j in range(max(0, i - 8), i)]
+            
+            if not prior_highs or not prior_lows:
+                continue
+
+            swing_high = max(prior_highs)
+            swing_low = min(prior_lows)
+
+            c = candles[i]
+            # BSL Sweep (High pierced swing high, but close failed below it with long upper wick)
+            upper_wick = c["high"] - max(c["open"], c["close"])
+            body = abs(c["close"] - c["open"])
+            if c["high"] > swing_high and c["close"] < swing_high and upper_wick > body:
+                sweeps.append(LiquiditySweepResult(
+                    sweep_type="BUY_SIDE_LIQUIDITY_SWEEP",
+                    swept_level=round(float(swing_high), 4),
+                    reversal_bias="BEARISH",
+                    timeframe=timeframe,
+                    description=f"Buy-Side Liquidity swept @ ${swing_high:.2f} (Bearish Reversal Wick)"
+                ))
+
+            # SSL Sweep (Low pierced swing low, but close held above it with long lower wick)
+            lower_wick = min(c["open"], c["close"]) - c["low"]
+            if c["low"] < swing_low and c["close"] > swing_low and lower_wick > body:
+                sweeps.append(LiquiditySweepResult(
+                    sweep_type="SELL_SIDE_LIQUIDITY_SWEEP",
+                    swept_level=round(float(swing_low), 4),
+                    reversal_bias="BULLISH",
+                    timeframe=timeframe,
+                    description=f"Sell-Side Liquidity swept @ ${swing_low:.2f} (Bullish Reversal Wick)"
+                ))
+
+        return sweeps[-4:]
+
+    @classmethod
+    def calculate_smart_money_concepts(
+        cls,
+        candles: List[Dict[str, Any]],
+        timeframe: str = "1h",
+        current_price: float = 0.0
+    ) -> SmartMoneyConceptsResult:
+        """
+        Synthesizes complete institutional Smart Money Concepts (SMC):
+        - Order Blocks (Demand / Supply)
+        - Fair Value Gaps (FVG)
+        - Liquidity Sweeps
+        - Premium vs Discount Equilibrium Range Analysis
+        - SMC Bias & Confluence Score
+        """
+        obs = cls.detect_order_blocks(candles, timeframe=timeframe)
+        fvgs = cls.detect_fair_value_gaps(candles, timeframe=timeframe)
+        sweeps = cls.detect_liquidity_sweeps(candles, timeframe=timeframe)
+
+        if not candles:
+            return SmartMoneyConceptsResult(
+                order_blocks=[],
+                fair_value_gaps=[],
+                liquidity_sweeps=[],
+                premium_discount_zone="EQUILIBRIUM",
+                equilibrium_price=current_price,
+                smc_bias="NEUTRAL",
+                smc_confluence_score=50.0,
+                institutional_verdict="Insufficient candle data for SMC analysis."
+            )
+
+        if current_price <= 0.0:
+            current_price = float(candles[-1]["close"])
+
+        # Determine Range Equilibrium (lookback 30 candles)
+        lookback = candles[-30:] if len(candles) >= 30 else candles
+        range_high = max(c["high"] for c in lookback)
+        range_low = min(c["low"] for c in lookback)
+        equilibrium = round((range_high + range_low) / 2.0, 4)
+        range_size = range_high - range_low
+
+        if range_size > 0:
+            pct_from_low = (current_price - range_low) / range_size
+            if pct_from_low > 0.55:
+                zone = "PREMIUM_OVERVALUED"
+            elif pct_from_low < 0.45:
+                zone = "DISCOUNT_UNDERVALUED"
+            else:
+                zone = "EQUILIBRIUM"
+        else:
+            zone = "EQUILIBRIUM"
+
+        # Confluence calculation
+        bull_pts = 0.0
+        bear_pts = 0.0
+
+        # 1. Premium / Discount Zone
+        if zone == "DISCOUNT_UNDERVALUED":
+            bull_pts += 30.0
+        elif zone == "PREMIUM_OVERVALUED":
+            bear_pts += 30.0
+        else:
+            bull_pts += 15.0
+            bear_pts += 15.0
+
+        # 2. Unmitigated FVGs
+        unmit_bull_fvg = [f for f in fvgs if f.fvg_type == "BULLISH_FVG" and not f.is_mitigated]
+        unmit_bear_fvg = [f for f in fvgs if f.fvg_type == "BEARISH_FVG" and not f.is_mitigated]
+        if unmit_bull_fvg:
+            bull_pts += min(30.0, len(unmit_bull_fvg) * 15.0)
+        if unmit_bear_fvg:
+            bear_pts += min(30.0, len(unmit_bear_fvg) * 15.0)
+
+        # 3. Order Blocks
+        demand_obs = [ob for ob in obs if ob.block_type == "BULLISH_DEMAND" and not ob.is_mitigated]
+        supply_obs = [ob for ob in obs if ob.block_type == "BEARISH_SUPPLY" and not ob.is_mitigated]
+        if demand_obs:
+            bull_pts += min(25.0, len(demand_obs) * 15.0)
+        if supply_obs:
+            bear_pts += min(25.0, len(supply_obs) * 15.0)
+
+        # 4. Liquidity Sweeps
+        recent_sweeps = sweeps[-2:] if sweeps else []
+        for sw in recent_sweeps:
+            if sw.reversal_bias == "BULLISH":
+                bull_pts += 20.0
+            elif sw.reversal_bias == "BEARISH":
+                bear_pts += 20.0
+
+        total_pts = bull_pts + bear_pts
+        if total_pts == 0:
+            smc_bias = "NEUTRAL"
+            score = 50.0
+            verdict = "Neutral institutional positioning. Price hovering around equilibrium."
+        elif bull_pts >= bear_pts + 30.0:
+            smc_bias = "STRONG_BULLISH"
+            score = min(96.0, 70.0 + (bull_pts - bear_pts) * 0.4)
+            verdict = f"High-Conviction Institutional Accumulation: Price in Discount (${current_price:.2f} < Eq ${equilibrium:.2f}) with active Demand Order Blocks."
+        elif bull_pts > bear_pts + 10.0:
+            smc_bias = "BULLISH"
+            score = min(88.0, 60.0 + (bull_pts - bear_pts) * 0.4)
+            verdict = "Bullish Smart Money order flow supported by discount liquidity."
+        elif bear_pts >= bull_pts + 30.0:
+            smc_bias = "STRONG_BEARISH"
+            score = min(96.0, 70.0 + (bear_pts - bull_pts) * 0.4)
+            verdict = f"High-Conviction Institutional Distribution: Price in Premium (${current_price:.2f} > Eq ${equilibrium:.2f}) under active Supply Order Blocks."
+        elif bear_pts > bull_pts + 10.0:
+            smc_bias = "BEARISH"
+            score = min(88.0, 60.0 + (bear_pts - bull_pts) * 0.4)
+            verdict = "Bearish Smart Money distribution pressure from overhead supply."
+        else:
+            smc_bias = "NEUTRAL"
+            score = 50.0
+            verdict = "Equilibrium order flow. Awaiting liquidity sweep or imbalance expansion."
+
+        return SmartMoneyConceptsResult(
+            order_blocks=obs,
+            fair_value_gaps=fvgs,
+            liquidity_sweeps=sweeps,
+            premium_discount_zone=zone,
+            equilibrium_price=equilibrium,
+            smc_bias=smc_bias,
+            smc_confluence_score=round(score, 1),
+            institutional_verdict=verdict
+        )
+
+    @classmethod
+    def calculate_technical_gauge(cls, tech: TechnicalAnalysisResult, closes: List[float], current_price: float) -> TechnicalGaugeResult:
+        """
+        Computes institutional TradingView-style Gauge:
+        - Oscillators: RSI, MACD, Stochastic, ADX, CCI, Bollinger %B
+        - Moving Averages: EMA 10, 20, 50, 100, 200, SMA 20, 50, 200
+        - Overall summary: STRONG_BUY, BUY, NEUTRAL, SELL, STRONG_SELL
+        """
+        # 1. Moving Averages evaluation
+        ma_buy = 0
+        ma_sell = 0
+        ma_neutral = 0
+
+        mas = [
+            tech.ema_20, tech.ema_50, tech.ema_100 or tech.ema_50, tech.ema_200,
+            tech.sma_20 or tech.ema_20, tech.sma_50 or tech.ema_50, tech.sma_200 or tech.ema_200
+        ]
+        for ma in mas:
+            if ma > 0:
+                if current_price > ma * 1.001:
+                    ma_buy += 1
+                elif current_price < ma * 0.999:
+                    ma_sell += 1
+                else:
+                    ma_neutral += 1
+
+        ma_total = ma_buy + ma_sell + ma_neutral
+        ma_summary = "NEUTRAL"
+        if ma_buy >= ma_total * 0.7:
+            ma_summary = "STRONG_BUY"
+        elif ma_buy >= ma_total * 0.5:
+            ma_summary = "BUY"
+        elif ma_sell >= ma_total * 0.7:
+            ma_summary = "STRONG_SELL"
+        elif ma_sell >= ma_total * 0.5:
+            ma_summary = "SELL"
+
+        ma_score = TechnicalGaugeScore(
+            buy_count=ma_buy,
+            sell_count=ma_sell,
+            neutral_count=ma_neutral,
+            summary=ma_summary
+        )
+
+        # 2. Oscillators evaluation
+        osc_buy = 0
+        osc_sell = 0
+        osc_neutral = 0
+
+        # RSI 14
+        if tech.rsi > 55 and tech.rsi < 70:
+            osc_buy += 1
+        elif tech.rsi < 45 and tech.rsi > 30:
+            osc_sell += 1
+        elif tech.rsi <= 30: # Oversold reversal opportunity
+            osc_buy += 1
+        elif tech.rsi >= 70: # Overbought risk
+            osc_sell += 1
+        else:
+            osc_neutral += 1
+
+        # MACD
+        if tech.macd.histogram > 0:
+            osc_buy += 1
+        elif tech.macd.histogram < 0:
+            osc_sell += 1
+        else:
+            osc_neutral += 1
+
+        # Stochastic
+        if tech.stochastic_k and tech.stochastic_d:
+            if tech.stochastic_k > tech.stochastic_d and tech.stochastic_k < 80:
+                osc_buy += 1
+            elif tech.stochastic_k < tech.stochastic_d and tech.stochastic_k > 20:
+                osc_sell += 1
+            else:
+                osc_neutral += 1
+
+        # ADX
+        if tech.adx and tech.adx > 25:
+            if tech.trend == "bullish":
+                osc_buy += 1
+            elif tech.trend == "bearish":
+                osc_sell += 1
+            else:
+                osc_neutral += 1
+        else:
+            osc_neutral += 1
+
+        # Bollinger %B
+        bb_range = tech.bollinger_bands.upper - tech.bollinger_bands.lower
+        if bb_range > 0:
+            pct_b = (current_price - tech.bollinger_bands.lower) / bb_range
+            if pct_b > 0.6:
+                osc_buy += 1
+            elif pct_b < 0.4:
+                osc_sell += 1
+            else:
+                osc_neutral += 1
+
+        osc_total = osc_buy + osc_sell + osc_neutral
+        osc_summary = "NEUTRAL"
+        if osc_buy >= osc_total * 0.65:
+            osc_summary = "STRONG_BUY"
+        elif osc_buy >= osc_total * 0.5:
+            osc_summary = "BUY"
+        elif osc_sell >= osc_total * 0.65:
+            osc_summary = "STRONG_SELL"
+        elif osc_sell >= osc_total * 0.5:
+            osc_summary = "SELL"
+
+        osc_score = TechnicalGaugeScore(
+            buy_count=osc_buy,
+            sell_count=osc_sell,
+            neutral_count=osc_neutral,
+            summary=osc_summary
+        )
+
+        # 3. Overall
+        total_buy = ma_buy + osc_buy
+        total_sell = ma_sell + osc_sell
+        total_neutral = ma_neutral + osc_neutral
+        grand_total = max(1, total_buy + total_sell + total_neutral)
+
+        overall_pct = (total_buy / grand_total) * 100.0
+        overall_summary = "NEUTRAL"
+        if overall_pct >= 68:
+            overall_summary = "STRONG_BUY"
+        elif overall_pct >= 52:
+            overall_summary = "BUY"
+        elif (total_sell / grand_total) * 100.0 >= 68:
+            overall_summary = "STRONG_SELL"
+        elif (total_sell / grand_total) * 100.0 >= 52:
+            overall_summary = "SELL"
+
+        overall_score = TechnicalGaugeScore(
+            buy_count=total_buy,
+            sell_count=total_sell,
+            neutral_count=total_neutral,
+            summary=overall_summary
+        )
+
+        return TechnicalGaugeResult(
+            oscillators=osc_score,
+            moving_averages=ma_score,
+            overall=overall_score,
+            score_percentage=round(overall_pct, 1)
+        )
+
+    @staticmethod
+    def get_current_trading_session() -> Dict[str, Any]:
+        """
+        Phase 3: Computes real-time institutional trading sessions & killzones based on UTC:
+        - London Open Killzone (07:00 - 10:00 GMT): High liquidity for EUR, GBP, Gold
+        - London / New York Overlap (12:30 - 15:30 GMT): Peak global volume for Gold, Equities, USD
+        - New York PM Session (16:00 - 20:00 GMT): US equity close & momentum runs
+        - Asian Session (22:00 - 07:00 GMT): Lower volume range consolidation
+        - London Lunch / Low Volatility (10:00 - 12:30 GMT)
+        """
+        now_utc = datetime.now(timezone.utc)
+        hour = now_utc.hour + (now_utc.minute / 60.0)
+
+        if 12.5 <= hour <= 15.5:
+            return {
+                "session_name": "LONDON_NY_OVERLAP_KILLZONE",
+                "session_label": "London & New York Overlap (Power Hours)",
+                "quality": "PRIME_LIQUIDITY",
+                "score_multiplier": 1.15,
+                "is_killzone": True,
+                "description": "Peak global volume & maximum institutional liquidity across Gold, Equities & USD."
+            }
+        elif 7.0 <= hour <= 10.0:
+            return {
+                "session_name": "LONDON_OPEN_KILLZONE",
+                "session_label": "London Open Killzone",
+                "quality": "PRIME_LIQUIDITY",
+                "score_multiplier": 1.10,
+                "is_killzone": True,
+                "description": "High directional liquidity expansion for European pairs, Gold & Commodities."
+            }
+        elif 16.0 <= hour <= 20.0:
+            return {
+                "session_name": "NEW_YORK_PM_SESSION",
+                "session_label": "New York PM Session",
+                "quality": "MODERATE_VOLUME",
+                "score_multiplier": 1.00,
+                "is_killzone": False,
+                "description": "Trend continuation and institutional positioning into NY cash close."
+            }
+        elif 10.0 < hour < 12.5:
+            return {
+                "session_name": "LONDON_LUNCH_MIDDAY",
+                "session_label": "London Midday / Pre-NY",
+                "quality": "MODERATE_VOLUME",
+                "score_multiplier": 0.95,
+                "is_killzone": False,
+                "description": "Interim liquidity window awaiting New York opening volatility."
+            }
+        else:
+            return {
+                "session_name": "ASIAN_PACIFIC_SESSION",
+                "session_label": "Asian / Pacific Session",
+                "quality": "LOW_LIQUIDITY_CAUTION",
+                "score_multiplier": 0.85,
+                "is_killzone": False,
+                "description": "Consolidation ranges. Beware of low liquidity fakeouts outside Asian pairs."
+            }
+

@@ -68,7 +68,7 @@ class MCPService:
 
         elif method == "track_record":
             record = TrackRecordService.calculate_track_record(db)
-            return record.dict()
+            return record.model_dump()
 
         elif method == "desk_read":
             tickers = market_provider.get_all_tickers()
@@ -125,7 +125,7 @@ class MCPService:
                 price = market_provider.get_latest_price(s)
                 tech = TechnicalAnalysisService.analyze(s, "1h", candles)
                 vote = AIAgentAnalystCouncil.evaluate_technical(tech, price)
-                if best is None or vote.confidence > best["confidence"]:
+                if best is None or vote.confidence > float(best["confidence"]):
                     best = {
                         "symbol": s,
                         "bias": vote.bias,

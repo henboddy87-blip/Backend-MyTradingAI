@@ -18,10 +18,11 @@ class SignalEngine:
         mtf,
         news_analysis,
         event_risk,
-        current_price: float
+        current_price: float,
+        smc: Optional[Any] = None
     ) -> Dict[str, float]:
         """
-        Combines 10 evidence pillars using configurable weights from backend Settings:
+        Combines institutional evidence pillars using configurable weights from backend Settings:
         - Market Structure (20%)
         - Higher-Timeframe Trend (15%)
         - Trend Indicators (10%)
@@ -32,6 +33,7 @@ class SignalEngine:
         - Volume Confirmation (5%)
         - News & Sentiment (5%)
         - Risk/Reward Buffer (5%)
+        + Smart Money Concepts (SMC) Premium/Discount & FVG/OB Confluence Multiplier
         """
         w_struct = settings.WEIGHT_MARKET_STRUCTURE
         w_htf = settings.WEIGHT_HTF_TREND
@@ -142,6 +144,26 @@ class SignalEngine:
         buy_pts += w_rr * 90.0
         sell_pts += w_rr * 90.0
 
+        # 11. Smart Money Concepts (SMC) Synergy Multiplier
+        if smc:
+            if smc.premium_discount_zone == "DISCOUNT_UNDERVALUED":
+                buy_pts *= 1.10
+                sell_pts *= 0.85
+            elif smc.premium_discount_zone == "PREMIUM_OVERVALUED":
+                sell_pts *= 1.10
+                buy_pts *= 0.85
+
+            if smc.smc_bias in ["STRONG_BULLISH", "BULLISH"]:
+                buy_pts += 5.0
+            elif smc.smc_bias in ["STRONG_BEARISH", "BEARISH"]:
+                sell_pts += 5.0
+
+        # 12. Phase 3: Institutional Session & Killzone Multiplier
+        session_info = TechnicalAnalysisService.get_current_trading_session()
+        sess_mult = session_info.get("score_multiplier", 1.0)
+        buy_pts *= sess_mult
+        sell_pts *= sess_mult
+
         # If imminent high-impact event risk is detected -> discount both sides!
         if event_risk and event_risk.get("news_risk") == "HIGH":
             buy_pts *= 0.65
@@ -174,11 +196,13 @@ class SignalEngine:
         current_price = market_provider.get_latest_price(symbol)
         
         asset = db.query(Asset).filter(Asset.symbol == symbol).first()
-        market_type = asset.market_type if asset else "crypto"
-        precision = asset.precision if asset else 2
+        market_type: str = str(getattr(asset, 'market_type', 'crypto')) if asset else "crypto"
+        precision: int = int(getattr(asset, 'precision', 2)) if asset else 2
 
-        # 2. Quantitative scan
+        # 2. Quantitative scan & Smart Money Concepts
         tech = TechnicalAnalysisService.analyze(symbol, timeframe, candles)
+        smc = TechnicalAnalysisService.calculate_smart_money_concepts(candles, timeframe=timeframe, current_price=current_price)
+        session_info = TechnicalAnalysisService.get_current_trading_session()
 
         # 3. Multi-Timeframe Alignment Matrix
         from app.api.routes.ai import compute_multi_timeframe_summary, calculate_trader_targets
@@ -193,8 +217,8 @@ class SignalEngine:
         )
         news_confirm["news_bias"] = news_sentiment.get("bias", "NEUTRAL")
 
-        # 5. Calculate Evidence-Based Confluence Scores across 10 Pillars
-        scores = cls.calculate_confluence_scores(tech, mtf, news_confirm, event_risk, current_price)
+        # 5. Calculate Evidence-Based Confluence Scores across 10 Pillars + SMC + Session
+        scores = cls.calculate_confluence_scores(tech, mtf, news_confirm, event_risk, current_price, smc=smc)
         buy_score = scores["buy_score"]
         sell_score = scores["sell_score"]
         net_advantage = scores["net_advantage"]
@@ -257,8 +281,10 @@ class SignalEngine:
             move_sign = "+" if direction == "BUY" else "-"
             reasoning = (
                 f"High-Conviction {direction} Signal ({confidence}% Confluence Score | Buy Score: {buy_score}, Sell Score: {sell_score}). "
+                f"Session Timing: {session_info.get('session_label')} ({session_info.get('quality')}). "
+                f"Smart Money Flow: {smc.smc_bias} in {smc.premium_discount_zone.replace('_', ' ')} (Eq: ${smc.equilibrium_price:.2f}). "
                 f"Market Structure: {tech.market_structure.pattern if tech.market_structure else 'Trend'} with {mtf.alignment_score}% MTF synergy. "
-                f"Target Goals: TP1 ({move_sign}{tp1_dist:.2f} pts), TP2 ({move_sign}{tp2_dist:.2f} pts), TP3 ({move_sign}{tp3_dist:.2f} pts). "
+                f"Target Goals: TP1 ({move_sign}{tp1_dist:.2f} pts - Auto-Breakeven at trigger), TP2 ({move_sign}{tp2_dist:.2f} pts - Trailing Stop), TP3 ({move_sign}{tp3_dist:.2f} pts). "
                 f"News Confirmation: {news_confirm.get('status')} ({news_sentiment.get('bullish')}% Bullish Sentiment). "
                 f"SR Clearance: {tech.sr_buffer.verdict if tech.sr_buffer else 'Clear headroom'}."
             )
@@ -271,10 +297,12 @@ class SignalEngine:
             risk_reward = 0.0
             reasoning = (
                 f"STAND ASIDE & WAIT (Confluence Score: {confidence}% | Buy: {buy_score}, Sell: {sell_score}, Net Advantage: {net_advantage} pts). "
+                f"Session State: {session_info.get('session_label')} ({session_info.get('quality')}). "
+                f"SMC State: {smc.institutional_verdict} "
                 f"{event_risk.get('warning') if event_risk.get('news_risk') == 'HIGH' else tech.sr_buffer.verdict if (tech.sr_buffer and not tech.sr_buffer.has_sufficient_headroom) else 'Directional advantage is below institutional threshold (minimum 70% score + 25 pts edge required).'}"
             )
 
-        now = datetime.datetime.utcnow()
+        now = datetime.datetime.now(datetime.timezone.utc)
         signal = Signal(
             symbol=symbol,
             market_type=market_type,
@@ -292,7 +320,7 @@ class SignalEngine:
             sentiment_summary=f"Sentiment: {news_sentiment.get('bias')} ({news_sentiment.get('bullish')}% Bullish / {news_sentiment.get('bearish')}% Bearish). {news_confirm.get('reasoning')}",
             risk_assessment=risk_vote.reasoning,
             reasoning=reasoning,
-            analyst_votes_json={k: v.dict() for k, v in votes.items()},
+            analyst_votes_json={k: (v.model_dump() if hasattr(v, "model_dump") else v.dict()) for k, v in votes.items()},
             status="ACTIVE" if direction != "NO_TRADE" else "NO_TRADE",
             is_pro_only=is_pro_only,
             created_at=now,
@@ -307,100 +335,179 @@ class SignalEngine:
     @classmethod
     def evaluate_active_signals(cls, db: Session) -> List[Dict[str, Any]]:
         """
-        Background lifecycle evaluator: Checks active signals against current live prices
-        Updates status to TP1_HIT, TP2_HIT, TP3_HIT, SL_HIT, or EXPIRED.
+        Background lifecycle evaluator with Phase 2 Auto-Breakeven & Trailing Stop:
+        - When TP1 is hit (+1.5R) -> Move Stop-Loss to ENTRY (0.00 Risk-Free Shield)
+        - When TP2 is hit (+2.5R) -> Trail Stop-Loss to TP1 (Lock in +1.5R guaranteed profit)
+        - When TP3 is hit (+3.5R) -> Close trade as full runner victory
+        - If price pulls back to Stop-Loss after TP1 -> Exit at BREAKEVEN (+0.5R scaled profit)
+        - If price pulls back to Stop-Loss after TP2 -> Exit at TRAILED_WIN (+1.5R locked profit)
         """
-        active_signals = db.query(Signal).filter(Signal.status.in_(["ACTIVE", "TP1_HIT", "TP2_HIT"])).all()
+        active_signals: List[Signal] = db.query(Signal).filter(Signal.status.in_(["ACTIVE", "TP1_HIT", "TP2_HIT"])).all()
         market_provider = get_market_data_provider()
         updates = []
-        now = datetime.datetime.utcnow()
+        now = datetime.datetime.now(datetime.timezone.utc)
 
         for sig in active_signals:
-            current_price = market_provider.get_latest_price(sig.symbol)
+            current_price = market_provider.get_latest_price(str(sig.symbol))
+            if not current_price or current_price <= 0:
+                continue
+
             changed = False
             outcome = None
-            pnl_r = 0.0
+
+            entry_val = getattr(sig, "entry", None)
+            sl_val = getattr(sig, "stop_loss", None)
+            tp1_val = getattr(sig, "take_profit_1", None)
+            tp2_val = getattr(sig, "take_profit_2", None)
+            tp3_val = getattr(sig, "take_profit_3", None)
+
+            entry_price: float = float(entry_val) if entry_val is not None else current_price
+            sl_price: float = float(sl_val) if sl_val is not None else (entry_price * 0.99)
+            tp1_price: float = float(tp1_val) if tp1_val is not None else (entry_price * 1.015)
+            tp2_price: float = float(tp2_val) if tp2_val is not None else (entry_price * 1.025)
+            tp3_price: float = float(tp3_val) if tp3_val is not None else (entry_price * 1.035)
 
             if sig.direction == "BUY":
-                if current_price <= sig.stop_loss:
-                    sig.status = "SL_HIT"
-                    sig.closed_at = now
-                    sig.exit_price = sig.stop_loss
-                    sig.pnl_r = -1.0
-                    sig.pnl_percentage = round(((sig.stop_loss - sig.entry) / sig.entry) * 100.0, 2)
-                    outcome = "LOSS"
-                    changed = True
-                elif current_price >= sig.take_profit_3:
-                    sig.status = "TP3_HIT"
-                    sig.closed_at = now
-                    sig.exit_price = sig.take_profit_3
-                    sig.pnl_r = 3.5
-                    sig.pnl_percentage = round(((sig.take_profit_3 - sig.entry) / sig.entry) * 100.0, 2)
+                # 1. Full TP3 Win
+                if current_price >= tp3_price:
+                    sig.status = "TP3_HIT"  # type: ignore[assignment]
+                    sig.closed_at = now  # type: ignore[assignment]
+                    sig.exit_price = tp3_price  # type: ignore[assignment]
+                    sig.pnl_r = 3.5  # type: ignore[assignment]
+                    sig.pnl_percentage = round(((tp3_price - entry_price) / entry_price) * 100.0, 2)  # type: ignore[assignment]
                     outcome = "WIN"
-                    changed = True
-                elif current_price >= sig.take_profit_2 and sig.status != "TP2_HIT":
-                    sig.status = "TP2_HIT"
-                    changed = True
-                elif current_price >= sig.take_profit_1 and sig.status != "TP1_HIT":
-                    sig.status = "TP1_HIT"
                     changed = True
 
-            elif sig.direction == "SELL":
-                if current_price >= sig.stop_loss:
-                    sig.status = "SL_HIT"
-                    sig.closed_at = now
-                    sig.exit_price = sig.stop_loss
-                    sig.pnl_r = -1.0
-                    sig.pnl_percentage = round(((sig.entry - sig.stop_loss) / sig.entry) * 100.0, 2)
-                    outcome = "LOSS"
+                # 2. TP2 Hit -> Trail SL to TP1 (+1.5R locked)
+                elif current_price >= tp2_price and sig.status != "TP2_HIT":
+                    sig.status = "TP2_HIT"  # type: ignore[assignment]
+                    sig.stop_loss = tp1_price  # type: ignore[assignment]  # Trailed stop loss to TP1!
                     changed = True
-                elif current_price <= sig.take_profit_3:
-                    sig.status = "TP3_HIT"
-                    sig.closed_at = now
-                    sig.exit_price = sig.take_profit_3
-                    sig.pnl_r = 3.5
-                    sig.pnl_percentage = round(((sig.entry - sig.take_profit_3) / sig.entry) * 100.0, 2)
+
+                # 3. TP1 Hit -> Move SL to Breakeven (Entry)
+                elif current_price >= tp1_price and sig.status == "ACTIVE":
+                    sig.status = "TP1_HIT"  # type: ignore[assignment]
+                    sig.stop_loss = entry_price  # type: ignore[assignment]  # Auto-Breakeven activated!
+                    changed = True
+
+                # 4. Check Stop-Loss / Breakeven / Trailing Stop Trigger
+                elif current_price <= sl_price:
+                    if sig.status == "TP2_HIT":
+                        # Stopped out on trailed stop at TP1
+                        sig.status = "CLOSED"  # type: ignore[assignment]
+                        sig.closed_at = now  # type: ignore[assignment]
+                        sig.exit_price = sl_price  # type: ignore[assignment]
+                        sig.pnl_r = 1.5  # type: ignore[assignment]
+                        sig.pnl_percentage = round(((sl_price - entry_price) / entry_price) * 100.0, 2)  # type: ignore[assignment]
+                        outcome = "WIN"
+                        changed = True
+                    elif sig.status == "TP1_HIT":
+                        # Stopped out on breakeven
+                        sig.status = "BREAKEVEN"  # type: ignore[assignment]
+                        sig.closed_at = now  # type: ignore[assignment]
+                        sig.exit_price = sl_price  # type: ignore[assignment]
+                        sig.pnl_r = 0.5  # type: ignore[assignment]  # Partial TP1 scale
+                        sig.pnl_percentage = 0.0  # type: ignore[assignment]
+                        outcome = "BREAKEVEN"
+                        changed = True
+                    else:
+                        # Initial Stop-Loss hit
+                        sig.status = "SL_HIT"  # type: ignore[assignment]
+                        sig.closed_at = now  # type: ignore[assignment]
+                        sig.exit_price = sl_price  # type: ignore[assignment]
+                        sig.pnl_r = -1.0  # type: ignore[assignment]
+                        sig.pnl_percentage = round(((sl_price - entry_price) / entry_price) * 100.0, 2)  # type: ignore[assignment]
+                        outcome = "LOSS"
+                        changed = True
+
+            elif sig.direction == "SELL":
+                # 1. Full TP3 Win
+                if current_price <= tp3_price:
+                    sig.status = "TP3_HIT"  # type: ignore[assignment]
+                    sig.closed_at = now  # type: ignore[assignment]
+                    sig.exit_price = tp3_price  # type: ignore[assignment]
+                    sig.pnl_r = 3.5  # type: ignore[assignment]
+                    sig.pnl_percentage = round(((entry_price - tp3_price) / entry_price) * 100.0, 2)  # type: ignore[assignment]
                     outcome = "WIN"
                     changed = True
-                elif current_price <= sig.take_profit_2 and sig.status != "TP2_HIT":
-                    sig.status = "TP2_HIT"
+
+                # 2. TP2 Hit -> Trail SL to TP1 (+1.5R locked)
+                elif current_price <= tp2_price and sig.status != "TP2_HIT":
+                    sig.status = "TP2_HIT"  # type: ignore[assignment]
+                    sig.stop_loss = tp1_price  # type: ignore[assignment]  # Trailed stop loss to TP1!
                     changed = True
-                elif current_price <= sig.take_profit_1 and sig.status != "TP1_HIT":
-                    sig.status = "TP1_HIT"
+
+                # 3. TP1 Hit -> Move SL to Breakeven (Entry)
+                elif current_price <= tp1_price and sig.status == "ACTIVE":
+                    sig.status = "TP1_HIT"  # type: ignore[assignment]
+                    sig.stop_loss = entry_price  # type: ignore[assignment]  # Auto-Breakeven activated!
                     changed = True
+
+                # 4. Check Stop-Loss / Breakeven / Trailing Stop Trigger
+                elif current_price >= sl_price:
+                    if sig.status == "TP2_HIT":
+                        sig.status = "CLOSED"  # type: ignore[assignment]
+                        sig.closed_at = now  # type: ignore[assignment]
+                        sig.exit_price = sl_price  # type: ignore[assignment]
+                        sig.pnl_r = 1.5  # type: ignore[assignment]
+                        sig.pnl_percentage = round(((entry_price - sl_price) / entry_price) * 100.0, 2)  # type: ignore[assignment]
+                        outcome = "WIN"
+                        changed = True
+                    elif sig.status == "TP1_HIT":
+                        sig.status = "BREAKEVEN"  # type: ignore[assignment]
+                        sig.closed_at = now  # type: ignore[assignment]
+                        sig.exit_price = sl_price  # type: ignore[assignment]
+                        sig.pnl_r = 0.5  # type: ignore[assignment]
+                        sig.pnl_percentage = 0.0  # type: ignore[assignment]
+                        outcome = "BREAKEVEN"
+                        changed = True
+                    else:
+                        sig.status = "SL_HIT"  # type: ignore[assignment]
+                        sig.closed_at = now  # type: ignore[assignment]
+                        sig.exit_price = sl_price  # type: ignore[assignment]
+                        sig.pnl_r = -1.0  # type: ignore[assignment]
+                        sig.pnl_percentage = round(((entry_price - sl_price) / entry_price) * 100.0, 2)  # type: ignore[assignment]
+                        outcome = "LOSS"
+                        changed = True
 
             if changed:
                 if outcome:
                     signal_outcome = SignalOutcome(
                         signal_id=sig.id,
+                        symbol=sig.symbol,
                         outcome=outcome,
-                        pnl_r=sig.pnl_r,
-                        pnl_percentage=sig.pnl_percentage,
-                        exit_price=sig.exit_price,
-                        exit_time=now,
-                        notes=f"Signal automatically closed on {sig.status}."
+                        pnl_r=sig.pnl_r or 0.0,
+                        pnl_pct=sig.pnl_percentage or 0.0,
+                        recorded_at=now
                     )
                     db.add(signal_outcome)
                 
                 db.commit()
-                updates.append({"signal_id": sig.id, "symbol": sig.symbol, "new_status": sig.status})
+                updates.append({"signal_id": sig.id, "symbol": sig.symbol, "new_status": sig.status, "stop_loss": sig.stop_loss})
 
         return updates
 
     @classmethod
-    def auto_scan_and_generate_signals(cls, db: Session, target_count: int = 3):
+    def auto_scan_and_generate_signals(cls, db: Session, target_count: int = 3) -> List[Signal]:
         """
         Background automated high-probability scanner:
         Scans global benchmark assets and persists top verified setups.
         """
-        assets = ["XAUUSD", "BTCUSDT", "ETHUSDT", "SOLUSDT", "EURUSD", "GBPUSD", "USDJPY", "USOIL", "NVDA", "NAS100"]
-        generated = 0
+        assets = ["XAUUSD", "BTCUSDT", "ETHUSDT", "SOLUSDT", "EURUSD", "GBPUSD", "USDJPY", "USOIL", "NVDA", "NAS100", "AAPL", "TSLA"]
+        generated = []
         for sym in assets:
-            if generated >= target_count:
+            if len(generated) >= target_count:
                 break
             try:
                 sig = cls.generate_signal(db, symbol=sym, timeframe="1h")
                 if sig.direction in ["BUY", "SELL"]:
-                    generated += 1
+                    generated.append(sig)
             except Exception as e:
                 logger.error(f"Error auto-generating signal for {sym}: {e}")
+
+        # If not enough BUY/SELL signals due to strict market conditions, also include the best evaluated signals
+        if len(generated) < target_count:
+            recent_sigs = db.query(Signal).order_by(Signal.created_at.desc()).limit(target_count).all()
+            return recent_sigs
+
+        return generated

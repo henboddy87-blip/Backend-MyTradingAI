@@ -135,7 +135,7 @@ class MockMarketDataProvider(MarketDataProvider):
             open_price = prev_close
             
             # Deterministic pseudo-random variation based on timestamp and symbol
-            rnd_seed = int((candle_time + sum(ord(c) for c in symbol)) % 10000)
+            rnd_seed = (candle_time + sum(ord(c) for c in symbol)) % 10000
             noise = (math.sin(rnd_seed) * 0.5 + math.cos(rnd_seed * 1.3) * 0.5) * vol * base_price * 0.4
             
             wave_mult = self._get_synthetic_multiplier(symbol, candle_time + step_seconds)

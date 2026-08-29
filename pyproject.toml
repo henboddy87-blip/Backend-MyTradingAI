@@ -1,0 +1,10 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+
+[tool.pyrefly]
+search-paths = [
+  ".",
+  "venv/Lib/site-packages"
+]

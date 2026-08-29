@@ -277,6 +277,94 @@ class TechnicalAnalysisResult(BaseModel):
     summary: str
     timestamp: datetime
 
+class PivotLevels(BaseModel):
+    pivot: float
+    r1: float
+    r2: float
+    r3: float
+    s1: float
+    s2: float
+    s3: float
+
+class PivotPointsResult(BaseModel):
+    classic: PivotLevels
+    fibonacci: PivotLevels
+    camarilla: PivotLevels
+
+class TechnicalGaugeScore(BaseModel):
+    buy_count: int
+    sell_count: int
+    neutral_count: int
+    summary: Literal["STRONG_BUY", "BUY", "NEUTRAL", "SELL", "STRONG_SELL"]
+
+class TechnicalGaugeResult(BaseModel):
+    oscillators: TechnicalGaugeScore
+    moving_averages: TechnicalGaugeScore
+    overall: TechnicalGaugeScore
+    score_percentage: float # 0 to 100
+
+class CandlePatternResult(BaseModel):
+    pattern_name: str
+    pattern_type: Literal["BULLISH", "BEARISH", "NEUTRAL"]
+    significance: Literal["HIGH", "MEDIUM", "LOW"]
+    description: str
+
+class OrderBlockResult(BaseModel):
+    block_type: Literal["BULLISH_DEMAND", "BEARISH_SUPPLY"]
+    price_high: float
+    price_low: float
+    timeframe: str
+    is_mitigated: bool
+
+class FairValueGapResult(BaseModel):
+    fvg_type: Literal["BULLISH_FVG", "BEARISH_FVG"]
+    top: float
+    bottom: float
+    midpoint: float  # Consequent Encroachment (50% level)
+    timeframe: str
+    is_mitigated: bool
+    description: str
+
+class LiquiditySweepResult(BaseModel):
+    sweep_type: Literal["BUY_SIDE_LIQUIDITY_SWEEP", "SELL_SIDE_LIQUIDITY_SWEEP"]
+    swept_level: float
+    reversal_bias: Literal["BULLISH", "BEARISH"]
+    timeframe: str
+    description: str
+
+class SmartMoneyConceptsResult(BaseModel):
+    order_blocks: List[OrderBlockResult] = []
+    fair_value_gaps: List[FairValueGapResult] = []
+    liquidity_sweeps: List[LiquiditySweepResult] = []
+    premium_discount_zone: Literal["PREMIUM_OVERVALUED", "DISCOUNT_UNDERVALUED", "EQUILIBRIUM"]
+    equilibrium_price: float
+    smc_bias: Literal["STRONG_BULLISH", "BULLISH", "NEUTRAL", "BEARISH", "STRONG_BEARISH"]
+    smc_confluence_score: float  # 0 to 100
+    institutional_verdict: str
+
+class MarketDeepAnalysisOut(BaseModel):
+    symbol: str
+    name: str
+    market_type: str
+    current_price: float
+    change_24h: float
+    high_24h: float
+    low_24h: float
+    volume_24h: float
+    timeframe: str
+    technical: TechnicalAnalysisResult
+    pivots: PivotPointsResult
+    gauge: TechnicalGaugeResult
+    patterns: List[CandlePatternResult]
+    order_blocks: List[OrderBlockResult]
+    fair_value_gaps: List[FairValueGapResult] = []
+    liquidity_sweeps: List[LiquiditySweepResult] = []
+    smc: Optional[SmartMoneyConceptsResult] = None
+    mtf_radar: Dict[str, str]
+    fear_and_greed: Dict[str, Any]
+    data_mode: str
+    timestamp: datetime
+
 # --- AI ANALYST COUNCIL & AI SCHEMAS ---
 class AnalystVote(BaseModel):
     analyst: Literal["technical", "macro", "sentiment", "risk"]
@@ -332,7 +420,7 @@ class AIAnalyzeResponse(BaseModel):
     risks: List[str] = []
     analyst_votes: Dict[str, AnalystVote]
     timestamp: datetime
-    data_mode: str = "mock"
+    data_mode: str = "live"
 
 class AIChatRequest(BaseModel):
     message: str

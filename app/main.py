@@ -92,3 +92,7 @@ def health_check():
         "ai_provider": settings.AI_PROVIDER,
         "market_provider": settings.MARKET_DATA_PROVIDER
     }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

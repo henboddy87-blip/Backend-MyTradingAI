@@ -60,6 +60,44 @@ class ConnectionManager:
                 self.disconnect(dead)
 
 manager = ConnectionManager()
+_broadcast_task = None
+
+async def market_broadcast_loop():
+    """Background loop that streams live real-time price updates to connected websockets"""
+    while True:
+        try:
+            if manager.active_connections:
+                market_provider = get_market_data_provider()
+                tickers = market_provider.get_all_tickers()
+                payload = {
+                    "type": "TICKER_UPDATE",
+                    "timestamp": time.time(),
+                    "data": [t.dict() if hasattr(t, "dict") else t for t in tickers]
+                }
+                await manager.broadcast_ticker_update(payload)
+                
+                # Also send symbol-specific updates to subscribers
+                for sym in list(manager.symbol_subscriptions.keys()):
+                    ticker = market_provider.get_ticker(sym)
+                    await manager.broadcast_symbol_update(sym, {
+                        "type": "SYMBOL_TICK",
+                        "symbol": sym,
+                        "data": ticker.dict() if hasattr(ticker, "dict") else ticker
+                    })
+        except Exception as e:
+            logger.debug(f"Broadcast loop tick error: {e}")
+        
+        await asyncio.sleep(1.5)
+
+def ensure_broadcast_loop():
+    global _broadcast_task
+    if _broadcast_task is None or _broadcast_task.done():
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                _broadcast_task = loop.create_task(market_broadcast_loop())
+        except Exception:
+            pass
 
 @router.websocket("/market")
 async def websocket_market_endpoint(websocket: WebSocket):
@@ -71,6 +109,7 @@ async def websocket_market_endpoint(websocket: WebSocket):
     - {"action": "ping"}
     """
     await manager.connect(websocket)
+    ensure_broadcast_loop()
     market_provider = get_market_data_provider()
     
     # Send initial welcome & market snapshot

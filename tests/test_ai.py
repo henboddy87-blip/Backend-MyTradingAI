@@ -17,7 +17,7 @@ def test_risk_analyst_veto():
         support_levels=[62000],
         resistance_levels=[69000],
         summary="Extreme volatility",
-        timestamp=datetime.datetime.utcnow()
+        timestamp=datetime.datetime.now(datetime.timezone.utc)
     )
 
     risk_vote = AIAgentAnalystCouncil.evaluate_risk("BTCUSDT", 68000.0, tech, "Low")

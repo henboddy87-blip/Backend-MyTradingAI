@@ -43,7 +43,7 @@ def get_current_user(
             )
 
         # Enforce API Key rate limit
-        rate_limiter.check_rate_limit(f"api_key_{api_key.id}", api_key.rate_limit_per_min)
+        rate_limiter.check_rate_limit(f"api_key_{api_key.id}", int(api_key.rate_limit_per_min or 60))
 
         user = db.query(User).filter(User.id == api_key.user_id).first()
         if not user or not user.is_active:

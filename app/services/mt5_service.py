@@ -21,7 +21,7 @@ class MT5Service:
                 margin=0.0,
                 free_margin=10000.0,
                 live_trading_enabled=settings.MT5_LIVE_TRADING,
-                last_heartbeat=datetime.datetime.utcnow()
+                last_heartbeat=datetime.datetime.now(datetime.timezone.utc)
             )
             db.add(account)
             db.commit()
@@ -51,10 +51,10 @@ class MT5Service:
             sl=sl,
             tp=tp,
             status="OPEN",
-            created_at=datetime.datetime.utcnow()
+            created_at=datetime.datetime.now(datetime.timezone.utc)
         )
         db.add(order)
-        account.last_heartbeat = datetime.datetime.utcnow()
+        account.last_heartbeat = datetime.datetime.now(datetime.timezone.utc)  # type: ignore[assignment]
         db.commit()
         db.refresh(order)
         logger.info(f"[MT5 BRIDGE] Simulated execution of {order_type} {volume} lots {symbol} @ {price}")
@@ -68,20 +68,20 @@ class MT5Service:
 
         profit = 0.0
         if order.order_type == "BUY":
-            profit = (close_price - order.open_price) * order.volume * 100.0
+            profit = (close_price - float(order.open_price)) * float(order.volume) * 100.0
         else:
-            profit = (order.open_price - close_price) * order.volume * 100.0
+            profit = (float(order.open_price) - close_price) * float(order.volume) * 100.0
 
-        order.close_price = close_price
-        order.profit = round(profit, 2)
-        order.status = "CLOSED"
-        order.closed_at = datetime.datetime.utcnow()
+        order.close_price = close_price  # type: ignore[assignment]
+        order.profit = round(profit, 2)  # type: ignore[assignment]
+        order.status = "CLOSED"  # type: ignore[assignment]
+        order.closed_at = datetime.datetime.now(datetime.timezone.utc)  # type: ignore[assignment]
 
         account = db.query(Mt5Account).filter(Mt5Account.id == order.account_id).first()
         if account:
-            account.balance += profit
-            account.equity = account.balance
-            account.free_margin = account.balance
+            account.balance += profit  # type: ignore[operator]
+            account.equity = account.balance  # type: ignore[assignment]
+            account.free_margin = account.balance  # type: ignore[assignment]
 
         db.commit()
         db.refresh(order)

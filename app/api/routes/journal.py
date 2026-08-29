@@ -56,7 +56,7 @@ def create_journal_entry(
         notes=entry_in.notes,
         screenshot_url=entry_in.screenshot_url,
         tags=entry_in.tags,
-        trade_date=entry_in.trade_date or datetime.datetime.utcnow()
+        trade_date=entry_in.trade_date or datetime.datetime.now(datetime.timezone.utc)
     )
     db.add(entry)
     db.commit()
@@ -157,8 +157,9 @@ def get_journal_stats(
     avg_win = round(sum(wins) / len(wins), 2) if wins else 0.0
     avg_loss = round(sum(losses) / len(losses), 2) if losses else 0.0
     pf = round(gross_win / gross_loss, 2) if gross_loss > 0 else (gross_win if gross_win > 0 else 1.0)
-    best_tr = max((e.profit_loss for e in entries), default=0.0)
-    worst_tr = min((e.profit_loss for e in entries), default=0.0)
+    pnl_values = [e.profit_loss for e in entries]
+    best_tr = max(pnl_values, default=0.0)
+    worst_tr = min(pnl_values, default=0.0)
 
     return JournalStatsOut(
         total_trades=total,
@@ -174,3 +175,82 @@ def get_journal_stats(
         best_trade=round(best_tr, 2),
         worst_trade=round(worst_tr, 2)
     )
+
+@router.post("/execute-trade", response_model=JournalOut)
+def execute_live_simulated_trade(
+    entry_in: JournalCreate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    1-Click Live Trading / Paper Order Execution:
+    Opens a live position at current market price or specified entry with risk guardrails.
+    """
+    from app.market import get_market_data_provider
+    provider = get_market_data_provider()
+    
+    current_price = entry_in.entry_price
+    if not current_price or current_price <= 0:
+        current_price = provider.get_latest_price(entry_in.symbol.upper())
+
+    entry = TradeJournal(
+        user_id=current_user.id,
+        symbol=entry_in.symbol.upper(),
+        direction=entry_in.direction.upper(),
+        timeframe=entry_in.timeframe,
+        entry_price=current_price,
+        exit_price=None,
+        stop_loss=entry_in.stop_loss,
+        take_profit=entry_in.take_profit,
+        position_size=entry_in.position_size or 1.0,
+        profit_loss=0.0,
+        pnl_r=0.0,
+        outcome="OPEN",
+        notes=entry_in.notes or f"Live 1-Click execution on {entry_in.symbol.upper()} @ {current_price}",
+        screenshot_url=entry_in.screenshot_url,
+        tags=entry_in.tags or "Live Execution",
+        trade_date=datetime.datetime.now(datetime.timezone.utc)
+    )
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+@router.post("/close-position/{id}", response_model=JournalOut)
+def close_live_position(
+    id: int,
+    exit_price: Optional[float] = None,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Closes an open position at current live market price and logs final PnL."""
+    entry = db.query(TradeJournal).filter(
+        TradeJournal.id == id,
+        TradeJournal.user_id == current_user.id
+    ).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Trade position not found")
+
+    from app.market import get_market_data_provider
+    provider = get_market_data_provider()
+    
+    actual_exit = exit_price if (exit_price and exit_price > 0) else provider.get_latest_price(entry.symbol)
+    entry.exit_price = actual_exit
+
+    # Calculate PnL
+    if entry.direction == "BUY":
+        pnl = (actual_exit - entry.entry_price) * entry.position_size
+    else:
+        pnl = (entry.entry_price - actual_exit) * entry.position_size
+
+    entry.profit_loss = round(pnl, 2)
+    entry.outcome = "WIN" if pnl > 0 else "LOSS" if pnl < 0 else "BREAKEVEN"
+
+    if entry.stop_loss:
+        risk_dist = abs(entry.entry_price - entry.stop_loss)
+        if risk_dist > 0:
+            entry.pnl_r = round(pnl / (risk_dist * entry.position_size), 2)
+
+    db.commit()
+    db.refresh(entry)
+    return entry

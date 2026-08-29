@@ -34,7 +34,7 @@ def create_api_key(
         key_prefix=key_prefix,
         key_hash=key_hash,
         rate_limit_per_min=req.rate_limit_per_min or 60,
-        created_at=datetime.datetime.utcnow()
+        created_at=datetime.datetime.now(datetime.timezone.utc)
     )
     db.add(api_key_obj)
     db.commit()
@@ -62,6 +62,6 @@ def revoke_api_key(
     if not key:
         raise HTTPException(status_code=404, detail="API Key not found")
 
-    key.revoked_at = datetime.datetime.utcnow()
+    key.revoked_at = datetime.datetime.now(datetime.timezone.utc)
     db.commit()
     return {"message": f"API Key '{key.name}' successfully revoked"}

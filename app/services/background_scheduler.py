@@ -1,6 +1,7 @@
 from apscheduler.schedulers.background import BackgroundScheduler
 from app.core.database import SessionLocal
 from app.services.signal_engine import SignalEngine
+from app.services.news_service import NewsService
 from app.models.models import Signal
 from app.core.logging import logger
 
@@ -17,17 +18,21 @@ def job_evaluate_signals():
 
 def job_auto_scan_market():
     """
-    Autonomous background scanner: Continuously evaluates live markets
-    and auto-generates signals whenever high-confidence setups form.
+    Autonomous background scanner placeholder:
+    Signal generation is on-demand based on explicit user trigger & live market analysis.
+    """
+    pass
+
+def job_sync_live_news():
+    """
+    Background news synchronization: Fetches fresh institutional market headlines
+    from live financial feeds and performs algorithmic sentiment scoring.
     """
     db = SessionLocal()
     try:
-        active_count = db.query(Signal).filter(Signal.status.in_(["ACTIVE", "TP1_HIT", "TP2_HIT"])).count()
-        if active_count < 15:
-            # Auto-generate 3-5 fresh verified signals
-            SignalEngine.auto_scan_and_generate_signals(db, target_count=3)
+        NewsService.sync_live_news(db, max_per_feed=6)
     except Exception as e:
-        logger.error(f"Error in autonomous background market scan: {e}")
+        logger.error(f"Error in background live news sync: {e}")
     finally:
         db.close()
 
@@ -35,10 +40,10 @@ def start_background_scheduler():
     try:
         # Run signal lifecycle check every 30 seconds
         scheduler.add_job(job_evaluate_signals, "interval", seconds=30, id="signal_evaluator", replace_existing=True)
-        # Run autonomous market strategy scan every 60 seconds
-        scheduler.add_job(job_auto_scan_market, "interval", seconds=60, id="market_auto_scanner", replace_existing=True)
+        # Run live financial news sync every 5 minutes
+        scheduler.add_job(job_sync_live_news, "interval", minutes=5, id="live_news_syncer", replace_existing=True)
         scheduler.start()
-        logger.info("APScheduler background tasks initialized (Signal Evaluator + Autonomous Market Scanner).")
+        logger.info("APScheduler background tasks initialized (Signal Evaluator + Live News Syncer).")
     except Exception as e:
         logger.error(f"Failed to start APScheduler: {e}")
 

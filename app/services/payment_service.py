@@ -35,21 +35,21 @@ class PaymentService:
                 "plan_code": plan.code,
                 "plan_name": plan.name
             },
-            created_at=datetime.datetime.utcnow()
+            created_at=datetime.datetime.now(datetime.timezone.utc)
         )
         db.add(payment)
 
         # Update or create subscription
-        now = datetime.datetime.utcnow()
+        now = datetime.datetime.now(datetime.timezone.utc)
         duration_days = 365 if billing_period == "yearly" else 30
         expires_at = now + datetime.timedelta(days=duration_days)
 
         subscription = db.query(Subscription).filter(Subscription.user_id == user.id).first()
         if subscription:
-            subscription.plan_id = plan.id
-            subscription.status = "ACTIVE"
-            subscription.started_at = now
-            subscription.expires_at = expires_at
+            subscription.plan_id = plan.id  # type: ignore[assignment]
+            subscription.status = "ACTIVE"  # type: ignore[assignment]
+            subscription.started_at = now  # type: ignore[assignment]
+            subscription.expires_at = expires_at  # type: ignore[assignment]
         else:
             subscription = Subscription(
                 user_id=user.id,

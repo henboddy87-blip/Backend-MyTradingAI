@@ -10,7 +10,7 @@ router = APIRouter(prefix="/news", tags=["News & Sentiment"])
 
 @router.get("/", response_model=List[NewsOut])
 def get_news_feed(
-    language: str = Query("en", regex="^(en|km)$"),
+    language: str = Query("en", pattern="^(en|km)$"),
     category: Optional[str] = None,
     symbol: Optional[str] = None,
     limit: int = Query(20, ge=1, le=50),
@@ -24,22 +24,22 @@ def get_news_feed(
         if item.sentiment:
             sent_out = NewsSentimentOut(
                 sentiment=item.sentiment.sentiment,
-                score=item.sentiment.score,
-                confidence=item.sentiment.confidence,
+                score=float(item.sentiment.score),
+                confidence=float(item.sentiment.confidence),
                 reasoning=item.sentiment.reasoning
             )
         
         result.append(NewsOut(
-            id=item.id,
-            title=item.title,
-            summary=item.summary,
-            content=item.content,
-            source=item.source,
-            url=item.url,
-            language=item.language,
-            category=item.category,
-            impact=item.impact,
-            affected_symbols_json=item.affected_symbols_json or [],
+            id=int(item.id),
+            title=str(item.title),
+            summary=str(item.summary),
+            content=str(item.content) if item.content is not None else None,
+            source=str(item.source),
+            url=str(item.url) if item.url is not None else None,
+            language=str(item.language),
+            category=str(item.category),
+            impact=str(item.impact),
+            affected_symbols_json=list(item.affected_symbols_json or []),
             published_at=item.published_at,
             sentiment=sent_out
         ))
@@ -54,7 +54,7 @@ def get_economic_calendar(symbol: str = Query("XAUUSD")):
         "symbol": symbol.upper(),
         "news_risk": risk_info.get("news_risk"),
         "warning": risk_info.get("warning"),
-        "events": [e.dict() if hasattr(e, "dict") else e for e in events]
+        "events": [e.model_dump() if hasattr(e, "model_dump") else (e.dict() if hasattr(e, "dict") else e) for e in events]
     }
 
 @router.get("/sentiment-overview")
@@ -76,22 +76,22 @@ def get_single_news(id: int, db: Session = Depends(get_db)):
     if item.sentiment:
         sent_out = NewsSentimentOut(
             sentiment=item.sentiment.sentiment,
-            score=item.sentiment.score,
-            confidence=item.sentiment.confidence,
+            score=float(item.sentiment.score),
+            confidence=float(item.sentiment.confidence),
             reasoning=item.sentiment.reasoning
         )
 
     return NewsOut(
-        id=item.id,
-        title=item.title,
-        summary=item.summary,
-        content=item.content,
-        source=item.source,
-        url=item.url,
-        language=item.language,
-        category=item.category,
-        impact=item.impact,
-        affected_symbols_json=item.affected_symbols_json or [],
+        id=int(item.id),
+        title=str(item.title),
+        summary=str(item.summary),
+        content=str(item.content) if item.content is not None else None,
+        source=str(item.source),
+        url=str(item.url) if item.url is not None else None,
+        language=str(item.language),
+        category=str(item.category),
+        impact=str(item.impact),
+        affected_symbols_json=list(item.affected_symbols_json or []),
         published_at=item.published_at,
         sentiment=sent_out
     )

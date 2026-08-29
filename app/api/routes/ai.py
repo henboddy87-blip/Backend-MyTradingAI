@@ -1,5 +1,5 @@
 import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Literal
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from app.core.database import get_db
@@ -11,6 +11,7 @@ from app.schemas.schemas import (
     AnalystVote, MultiTimeframeSummary, TimeframeAlignment,
     ConfidenceScoreBreakdown, SignalInvalidation, EconomicEventItem
 )
+from app.config import settings
 from app.market import get_market_data_provider
 from app.services.technical_analysis import TechnicalAnalysisService
 from app.services.ai_council import AIAgentAnalystCouncil
@@ -109,9 +110,10 @@ def compute_multi_timeframe_summary(symbol: str, market_provider) -> MultiTimefr
             t_bias = "Consolidation Range"
             t_conf = 50.0
 
+        trend_val: Literal["BULLISH", "BEARISH", "NEUTRAL"] = "BULLISH" if tech.trend == "bullish" else ("BEARISH" if tech.trend == "bearish" else "NEUTRAL")
         tf_data[tf] = TimeframeAlignment(
             timeframe=tf,
-            trend=tech.trend.upper(),
+            trend=trend_val,
             bias=t_bias,
             confidence=round(t_conf, 1)
         )
@@ -345,7 +347,7 @@ async def analyze_market_setup(
         risks=risks,
         analyst_votes=votes,
         timestamp=datetime.datetime.now(datetime.timezone.utc),
-        data_mode="mock"
+        data_mode=settings.DATA_MODE
     )
 
 @router.post("/best-setup")
@@ -412,7 +414,7 @@ async def get_best_market_setup(
                             f"Target Goals: TP1 ({move_sign}{tp1_dist:.2f} pts), TP2 ({move_sign}{tp2_dist:.2f} pts), TP3 ({move_sign}{tp3_dist:.2f} pts). "
                             f"Technical and macro alignment confirm asymmetric edge."
                         ),
-                        "votes": {k: (v.dict() if hasattr(v, 'dict') else v) for k, v in votes.items()}
+                        "votes": {k: (v.model_dump() if hasattr(v, 'model_dump') else v) for k, v in votes.items()}
                     }
 
     if not best_candidate:
@@ -491,13 +493,18 @@ async def ai_chat_copilot(
     db.add_all([msg_user, msg_assistant])
     db.commit()
 
+    structured_ctx = {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "recommended_action": "HOLD" if tech.rsi > 40 and tech.rsi < 60 else "BUY" if tech.rsi <= 40 else "SELL",
+        "key_levels": {"support": tech.support_levels, "resistance": tech.resistance_levels}
+    }
+
     return AIChatResponse(
         conversation_id=conv_id,
         reply=response_text,
-        symbol=symbol,
-        timeframe=timeframe,
-        recommended_action="HOLD" if tech.rsi > 40 and tech.rsi < 60 else "BUY" if tech.rsi <= 40 else "SELL",
-        key_levels={"support": tech.support_levels, "resistance": tech.resistance_levels}
+        structured_context=structured_ctx,
+        timestamp=datetime.datetime.now(datetime.timezone.utc)
     )
 
 @router.get("/scanner/best-setups")
@@ -541,12 +548,12 @@ def get_best_setup_scanner():
                 "regime": tech.market_regime.regime if tech.market_regime else "RANGE",
                 "structure": tech.market_structure.structure_bias if tech.market_structure else "NEUTRAL"
             })
-        except Exception as e:
+        except Exception:
             continue
 
-    results.sort(key=lambda x: x["confidence"], reverse=True)
+    results.sort(key=lambda x: float(x["confidence"]), reverse=True)
     best = results[0] if results else None
-    has_quality = best is not None and best["confidence"] >= 75.0 and best["direction"] != "WAIT"
+    has_quality = best is not None and float(best["confidence"]) >= 75.0 and best["direction"] != "WAIT"
 
     return {
         "has_quality_setup": has_quality,

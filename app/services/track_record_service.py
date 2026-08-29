@@ -52,16 +52,17 @@ class TrackRecordService:
             )
 
         total_trades = len(outcomes)
-        wins = sum(1 for o in outcomes if o.outcome == "WIN")
-        losses = sum(1 for o in outcomes if o.outcome == "LOSS")
+        wins = sum(1 for o in outcomes if str(o.outcome) == "WIN")
+        losses = sum(1 for o in outcomes if str(o.outcome) == "LOSS")
         win_rate = round((wins / total_trades) * 100.0, 1) if total_trades > 0 else 0.0
         loss_rate = round((losses / total_trades) * 100.0, 1) if total_trades > 0 else 0.0
 
-        total_r = round(sum(o.pnl_r for o in outcomes), 2)
+        pnl_values = [float(o.pnl_r) for o in outcomes]
+        total_r = round(float(sum(pnl_values)), 2)
         avg_r = round(total_r / total_trades, 2) if total_trades > 0 else 0.0
 
-        winning_r_list = [o.pnl_r for o in outcomes if o.pnl_r > 0]
-        losing_r_list = [abs(o.pnl_r) for o in outcomes if o.pnl_r < 0]
+        winning_r_list: List[float] = [r for r in pnl_values if r > 0]
+        losing_r_list: List[float] = [abs(r) for r in pnl_values if r < 0]
 
         avg_win_r = round(sum(winning_r_list) / len(winning_r_list), 2) if winning_r_list else 0.0
         avg_loss_r = round(sum(losing_r_list) / len(losing_r_list), 2) if losing_r_list else 0.0
@@ -84,8 +85,9 @@ class TrackRecordService:
         max_drawdown_pct = 0.0
 
         for o in outcomes:
-            cumulative_r += o.pnl_r
-            current_equity += current_equity * (o.pnl_r * 0.015)
+            pnl_r_val = float(o.pnl_r)
+            cumulative_r += pnl_r_val
+            current_equity += current_equity * (pnl_r_val * 0.015)
             if current_equity > peak_equity:
                 peak_equity = current_equity
             
@@ -96,17 +98,18 @@ class TrackRecordService:
             date_str = o.recorded_at.strftime("%Y-%m-%d")
             equity_curve.append(EquityPoint(
                 date=date_str,
-                equity=round(current_equity, 2),
-                pnl_r=round(cumulative_r, 2)
+                equity=round(float(current_equity), 2),
+                pnl_r=round(float(cumulative_r), 2)
             ))
 
         # Performance by Asset
         asset_stats: Dict[str, Dict[str, Any]] = defaultdict(lambda: {"trades": 0, "wins": 0, "total_r": 0.0})
         for o in outcomes:
-            asset_stats[o.symbol]["trades"] += 1
-            if o.outcome == "WIN":
-                asset_stats[o.symbol]["wins"] += 1
-            asset_stats[o.symbol]["total_r"] += o.pnl_r
+            sym_key = str(o.symbol)
+            asset_stats[sym_key]["trades"] += 1
+            if str(o.outcome) == "WIN":
+                asset_stats[sym_key]["wins"] += 1
+            asset_stats[sym_key]["total_r"] += float(o.pnl_r)
 
         perf_by_asset: List[PerformanceByAsset] = []
         for sym, stats in asset_stats.items():
@@ -115,7 +118,7 @@ class TrackRecordService:
                 symbol=sym,
                 trades=stats["trades"],
                 win_rate=wr,
-                total_r=round(stats["total_r"], 2)
+                total_r=round(float(stats["total_r"]), 2)
             ))
 
         perf_by_asset.sort(key=lambda x: x.total_r, reverse=True)
@@ -123,14 +126,14 @@ class TrackRecordService:
         worst_symbol = perf_by_asset[-1].symbol if perf_by_asset else "N/A"
 
         # Performance by Timeframe
-        signals_map = {s.id: s.timeframe for s in db.query(Signal.id, Signal.timeframe).all()}
+        signals_map = {int(s[0]): str(s[1]) for s in db.query(Signal.id, Signal.timeframe).all()}
         tf_stats: Dict[str, Dict[str, Any]] = defaultdict(lambda: {"trades": 0, "wins": 0, "total_r": 0.0})
         for o in outcomes:
-            tf = signals_map.get(o.signal_id, "1h")
+            tf = signals_map.get(int(o.signal_id), "1h")
             tf_stats[tf]["trades"] += 1
-            if o.outcome == "WIN":
+            if str(o.outcome) == "WIN":
                 tf_stats[tf]["wins"] += 1
-            tf_stats[tf]["total_r"] += o.pnl_r
+            tf_stats[tf]["total_r"] += float(o.pnl_r)
 
         perf_by_tf: List[PerformanceByTimeframe] = []
         for tf, stats in tf_stats.items():
@@ -139,7 +142,7 @@ class TrackRecordService:
                 timeframe=tf,
                 trades=stats["trades"],
                 win_rate=wr,
-                total_r=round(stats["total_r"], 2)
+                total_r=round(float(stats["total_r"]), 2)
             ))
 
         # Monthly performance
@@ -147,16 +150,16 @@ class TrackRecordService:
         for o in outcomes:
             month_key = o.recorded_at.strftime("%Y-%m")
             monthly_map[month_key]["trades"] += 1
-            if o.outcome == "WIN":
+            if str(o.outcome) == "WIN":
                 monthly_map[month_key]["wins"] += 1
-            monthly_map[month_key]["pnl_r"] += o.pnl_r
+            monthly_map[month_key]["pnl_r"] += float(o.pnl_r)
 
         monthly_perf: List[MonthlyPerformance] = []
         for m, stats in sorted(monthly_map.items()):
             wr = round((stats["wins"] / stats["trades"]) * 100.0, 1) if stats["trades"] > 0 else 0.0
             monthly_perf.append(MonthlyPerformance(
                 month=m,
-                pnl_pct=round(stats["pnl_r"] * 1.5, 1),
+                pnl_pct=round(float(stats["pnl_r"]) * 1.5, 1),
                 trades=stats["trades"],
                 win_rate=wr
             ))

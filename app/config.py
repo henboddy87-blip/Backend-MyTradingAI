@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./data/app.db"
     
     # Modes
-    DATA_MODE: str = "mock" # "mock" or "live"
+    DATA_MODE: str = "live" # "mock" or "live"
     
     # AI Provider
     AI_PROVIDER: str = "mock" # "mock" or "openai"
@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     AI_API_KEY: str = ""
     
     # Market Data Provider
-    MARKET_DATA_PROVIDER: str = "mock" # "mock", "binance", "twelvedata", "yahoo"
+    MARKET_DATA_PROVIDER: str = "live" # "live", "binance", "twelvedata", "yahoo", "mock"
     BINANCE_API_KEY: str = ""
     TWELVEDATA_API_KEY: str = ""
     

@@ -34,40 +34,7 @@ def get_signals(
         query = query.filter(Signal.direction == direction.upper())
 
     signals = query.order_by(Signal.created_at.desc()).offset(offset).limit(limit).all()
-
-    result = []
-    for s in signals:
-        result.append(SignalOut(
-            id=s.id,
-            symbol=s.symbol,
-            market_type=s.market_type,
-            timeframe=s.timeframe,
-            direction=s.direction,
-            entry=s.entry,
-            stop_loss=s.stop_loss,
-            take_profit_1=s.take_profit_1,
-            take_profit_2=s.take_profit_2,
-            take_profit_3=s.take_profit_3,
-            confidence=s.confidence,
-            risk_reward=s.risk_reward,
-            bias=s.bias,
-            technical_summary=s.technical_summary,
-            sentiment_summary=s.sentiment_summary,
-            risk_assessment=s.risk_assessment,
-            reasoning=s.reasoning,
-            analyst_votes_json=s.analyst_votes_json,
-            status=s.status,
-            is_pro_only=False,
-            is_locked_for_tier=False,
-            created_at=s.created_at,
-            published_at=s.published_at,
-            closed_at=s.closed_at,
-            exit_price=s.exit_price,
-            pnl_r=s.pnl_r,
-            pnl_percentage=s.pnl_percentage
-        ))
-
-    return result
+    return [SignalOut.model_validate(s) for s in signals]
 
 @router.get("/{id}", response_model=SignalOut)
 def get_signal(
@@ -79,35 +46,39 @@ def get_signal(
     if not s:
         raise HTTPException(status_code=404, detail="Signal not found")
 
-    return SignalOut(
-        id=s.id,
-        symbol=s.symbol,
-        market_type=s.market_type,
-        timeframe=s.timeframe,
-        direction=s.direction,
-        entry=s.entry,
-        stop_loss=s.stop_loss,
-        take_profit_1=s.take_profit_1,
-        take_profit_2=s.take_profit_2,
-        take_profit_3=s.take_profit_3,
-        confidence=s.confidence,
-        risk_reward=s.risk_reward,
-        bias=s.bias,
-        technical_summary=s.technical_summary,
-        sentiment_summary=s.sentiment_summary,
-        risk_assessment=s.risk_assessment,
-        reasoning=s.reasoning,
-        analyst_votes_json=s.analyst_votes_json,
-        status=s.status,
-        is_pro_only=False,
-        is_locked_for_tier=False,
-        created_at=s.created_at,
-        published_at=s.published_at,
-        closed_at=s.closed_at,
-        exit_price=s.exit_price,
-        pnl_r=s.pnl_r,
-        pnl_percentage=s.pnl_percentage
+    return SignalOut.model_validate(s)
+
+@router.post("/generate-live", response_model=SignalOut)
+async def generate_live_signal(
+    symbol: str = Query(..., description="Asset symbol"),
+    timeframe: str = Query("1h"),
+    risk_level: str = Query("Medium"),
+    is_pro_only: bool = Query(False),
+    current_user: Optional[User] = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Generates an institutional AI signal on demand from live exchange market data."""
+    sig = SignalEngine.generate_signal(
+        db, symbol=symbol.upper(), timeframe=timeframe, risk_level=risk_level, is_pro_only=is_pro_only
     )
+    
+    # Broadcast to Telegram if active and configured
+    if sig.direction != "NO_TRADE":
+        try:
+            await TelegramService.send_signal_alert({
+                "symbol": sig.symbol,
+                "direction": sig.direction,
+                "entry": sig.entry,
+                "stop_loss": sig.stop_loss,
+                "take_profit_1": sig.take_profit_1,
+                "take_profit_2": sig.take_profit_2,
+                "take_profit_3": sig.take_profit_3,
+                "confidence": sig.confidence
+            })
+        except Exception:
+            pass
+
+    return SignalOut.model_validate(sig)
 
 @router.post("/analyze-and-publish", response_model=SignalOut)
 async def analyze_and_publish(
@@ -135,7 +106,7 @@ async def analyze_and_publish(
             "confidence": sig.confidence
         })
 
-    return SignalOut.from_orm(sig)
+    return SignalOut.model_validate(sig)
 
 @router.post("/publish-from-analysis", response_model=SignalOut)
 async def publish_from_analysis(
@@ -148,7 +119,7 @@ async def publish_from_analysis(
     
     from app.models.models import Asset
     asset = db.query(Asset).filter(Asset.symbol == req.symbol.upper()).first()
-    market_type = asset.market_type if asset else "crypto"
+    market_type = str(asset.market_type) if asset and asset.market_type else "crypto"
     
     now = datetime.datetime.now(datetime.timezone.utc)
     sig = Signal(
@@ -168,7 +139,7 @@ async def publish_from_analysis(
         sentiment_summary=str(req.news_sentiment),
         risk_assessment=req.risk_assessment,
         reasoning=req.reasoning,
-        analyst_votes_json={k: (v.dict() if hasattr(v, 'dict') else v) for k, v in req.analyst_votes.items()},
+        analyst_votes_json={k: (v.model_dump() if hasattr(v, 'model_dump') else (v.dict() if hasattr(v, 'dict') else v)) for k, v in req.analyst_votes.items()},
         status="ACTIVE",
         is_pro_only=False,
         created_at=now,
@@ -177,7 +148,7 @@ async def publish_from_analysis(
     db.add(sig)
     db.commit()
     db.refresh(sig)
-    return SignalOut.from_orm(sig)
+    return SignalOut.model_validate(sig)
 
 @router.post("/", response_model=SignalOut, status_code=status.HTTP_201_CREATED)
 def create_custom_signal(
@@ -187,7 +158,7 @@ def create_custom_signal(
 ):
     from app.models.models import Asset
     asset = db.query(Asset).filter(Asset.symbol == req.symbol.upper()).first()
-    market_type = asset.market_type if asset else req.market_type
+    market_type = str(asset.market_type) if asset and asset.market_type else req.market_type
     
     now = datetime.datetime.now(datetime.timezone.utc)
     sig = Signal(
@@ -216,7 +187,7 @@ def create_custom_signal(
     db.add(sig)
     db.commit()
     db.refresh(sig)
-    return SignalOut.from_orm(sig)
+    return SignalOut.model_validate(sig)
 
 @router.put("/{id}", response_model=SignalOut)
 def update_signal(
@@ -230,25 +201,25 @@ def update_signal(
         raise HTTPException(status_code=404, detail="Signal not found")
     
     if req.entry is not None:
-        sig.entry = req.entry
+        setattr(sig, "entry", req.entry)
     if req.stop_loss is not None:
-        sig.stop_loss = req.stop_loss
+        setattr(sig, "stop_loss", req.stop_loss)
     if req.take_profit_1 is not None:
-        sig.take_profit_1 = req.take_profit_1
+        setattr(sig, "take_profit_1", req.take_profit_1)
     if req.take_profit_2 is not None:
-        sig.take_profit_2 = req.take_profit_2
+        setattr(sig, "take_profit_2", req.take_profit_2)
     if req.take_profit_3 is not None:
-        sig.take_profit_3 = req.take_profit_3
+        setattr(sig, "take_profit_3", req.take_profit_3)
     if req.status is not None:
-        sig.status = req.status
+        setattr(sig, "status", req.status)
         if req.status in ["CLOSED", "CANCELLED", "TP1_HIT", "TP2_HIT", "TP3_HIT", "SL_HIT"]:
-            sig.closed_at = datetime.datetime.now(datetime.timezone.utc)
+            setattr(sig, "closed_at", datetime.datetime.now(datetime.timezone.utc))
     if req.reasoning is not None:
-        sig.reasoning = req.reasoning
+        setattr(sig, "reasoning", req.reasoning)
 
     db.commit()
     db.refresh(sig)
-    return SignalOut.from_orm(sig)
+    return SignalOut.model_validate(sig)
 
 @router.delete("/{id}")
 def delete_signal(
@@ -282,14 +253,14 @@ def auto_generate_market_signals(
     db: Session = Depends(get_db)
 ):
     signals = SignalEngine.auto_scan_and_generate_signals(db, target_count=count)
-    return [SignalOut.from_orm(s) for s in signals]
+    return [SignalOut.model_validate(s) for s in signals]
 
 @router.post("/{id}/void")
 def void_signal(id: int, current_user: User = Depends(get_current_admin_user), db: Session = Depends(get_db)):
     sig = db.query(Signal).filter(Signal.id == id).first()
     if not sig:
         raise HTTPException(status_code=404, detail="Signal not found")
-    sig.status = "CANCELLED"
-    sig.closed_at = datetime.datetime.now(datetime.timezone.utc)
+    setattr(sig, "status", "CANCELLED")
+    setattr(sig, "closed_at", datetime.datetime.now(datetime.timezone.utc))
     db.commit()
     return {"message": f"Signal #{id} has been cancelled/voided"}
