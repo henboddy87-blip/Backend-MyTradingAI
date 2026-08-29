@@ -195,20 +195,24 @@ class AIAgentAnalystCouncil:
                 veto = True
                 risk_flags.append("Veto triggered: Volatility exceeds safety limits.")
 
-        # Check overextended oscillator states
-        if tech.trend == "bullish" and tech.rsi > 78:
-            risk_flags.append(f"Extreme overbought exhaustion (RSI {tech.rsi:.1f}).")
-            veto = True
-        elif tech.trend == "bearish" and tech.rsi < 22:
-            risk_flags.append(f"Extreme oversold exhaustion (RSI {tech.rsi:.1f}).")
+        # Check SR Headroom & Resistance Proximity
+        if tech.sr_buffer and not tech.sr_buffer.has_sufficient_headroom:
+            risk_flags.append(tech.sr_buffer.verdict)
+            if risk_level in ["Low", "Medium"]:
+                veto = True
+                risk_flags.append("Veto: Trade entry blocked by immediate overhead resistance or floor support.")
+
+        # Check Uncertain Market Regime
+        if tech.market_regime and tech.market_regime.regime == "UNCERTAIN":
+            risk_flags.append("Market regime is UNCERTAIN. Stand aside until clarity emerges.")
             veto = True
 
         if veto:
             bias = "neutral"
-            reasoning = "Risk Analyst VETO: Unfavorable asymmetric risk-to-reward, excessive ATR volatility, or overextended oscillator conditions. Capital preservation enforced."
+            reasoning = f"Risk Analyst VETO: {risk_flags[0] if risk_flags else 'Unfavorable asymmetric risk-to-reward or overextended condition.'} Capital preservation enforced."
         else:
             bias = tech.trend
-            reasoning = f"Favorable risk parameters: ATR volatility buffer (${tech.atr:.2f}) provides clean stop placement with favorable downside risk protection."
+            reasoning = f"Favorable risk parameters: ATR volatility buffer (${tech.atr:.2f}) and SR clearance provide asymmetric reward structure with protected invalidation level."
 
         return AnalystVote(
             analyst="risk",

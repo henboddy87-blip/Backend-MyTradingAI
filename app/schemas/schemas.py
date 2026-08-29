@@ -227,6 +227,27 @@ class EconomicEventItem(BaseModel):
     is_approaching: bool
     risk_level: Literal["HIGH", "MODERATE", "LOW"]
 
+class IndicatorEvidence(BaseModel):
+    value: float
+    direction: Literal["bullish", "bearish", "neutral"]
+    interpretation: str
+    strength: float = 0.5 # 0.0 to 1.0
+    timestamp: datetime
+
+class VolumeMetrics(BaseModel):
+    trend: Literal["INCREASING", "DECREASING", "STABLE"]
+    spike_ratio: float
+    is_volume_confirmed: bool
+    interpretation: str
+
+class SupportResistanceBuffer(BaseModel):
+    has_sufficient_headroom: bool
+    nearest_support: Optional[float] = None
+    nearest_resistance: Optional[float] = None
+    distance_to_resistance: Optional[float] = None
+    distance_to_support: Optional[float] = None
+    verdict: str
+
 class TechnicalAnalysisResult(BaseModel):
     symbol: str
     timeframe: str
@@ -236,14 +257,21 @@ class TechnicalAnalysisResult(BaseModel):
     macd: MACDResult
     ema_20: float
     ema_50: float
+    ema_100: Optional[float] = 0.0
     ema_200: float
+    sma_20: Optional[float] = 0.0
+    sma_50: Optional[float] = 0.0
+    sma_200: Optional[float] = 0.0
     atr: float
     adx: Optional[float] = 25.0
     stochastic_k: Optional[float] = 50.0
     stochastic_d: Optional[float] = 50.0
     bollinger_bands: BollingerBandsResult
+    volume_metrics: Optional[VolumeMetrics] = None
     support_levels: List[float]
     resistance_levels: List[float]
+    sr_buffer: Optional[SupportResistanceBuffer] = None
+    indicator_evidence: Optional[Dict[str, IndicatorEvidence]] = None
     market_structure: Optional[MarketStructureResult] = None
     market_regime: Optional[MarketRegimeResult] = None
     summary: str

@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 from app.schemas.schemas import (
     TechnicalAnalysisResult, MACDResult, BollingerBandsResult,
     MarketStructureResult, MarketRegimeResult, MultiTimeframeSummary,
-    TimeframeAlignment, ConfidenceScoreBreakdown, SignalInvalidation
+    TimeframeAlignment, ConfidenceScoreBreakdown, SignalInvalidation,
+    IndicatorEvidence, VolumeMetrics, SupportResistanceBuffer
 )
 
 class TechnicalAnalysisService:
@@ -17,6 +18,12 @@ class TechnicalAnalysisService:
         for price in prices[period:]:
             ema = (price * k) + (ema * (1.0 - k))
         return round(ema, 4)
+
+    @staticmethod
+    def calculate_sma(prices: List[float], period: int) -> float:
+        if not prices or len(prices) < period:
+            return prices[-1] if prices else 0.0
+        return round(sum(prices[-period:]) / period, 4)
 
     @staticmethod
     def calculate_rsi(prices: List[float], period: int = 14) -> float:
@@ -189,6 +196,48 @@ class TechnicalAnalysisService:
         return round(current_k, 2), round(current_d, 2)
 
     @staticmethod
+    def calculate_volume_metrics(candles: List[Dict[str, Any]], period: int = 20) -> VolumeMetrics:
+        """Calculates volume trend, spike multiplier, and confirmation status"""
+        if len(candles) < 5:
+            return VolumeMetrics(
+                trend="STABLE",
+                spike_ratio=1.0,
+                is_volume_confirmed=True,
+                interpretation="Standard baseline volume depth."
+            )
+
+        volumes = [c.get("volume", 100.0) for c in candles]
+        current_vol = volumes[-1]
+        recent_window = volumes[-period:] if len(volumes) >= period else volumes
+        avg_vol = sum(recent_window) / len(recent_window) if recent_window else 1.0
+
+        spike_ratio = round(current_vol / max(1.0, avg_vol), 2)
+        
+        # Determine trend of volume over last 5 candles
+        last_5 = volumes[-5:]
+        if last_5[-1] > last_5[0] * 1.2:
+            trend = "INCREASING"
+        elif last_5[-1] < last_5[0] * 0.8:
+            trend = "DECREASING"
+        else:
+            trend = "STABLE"
+
+        is_confirmed = spike_ratio >= 1.15
+        if spike_ratio >= 1.5:
+            interp = f"Significant Institutional Volume Surge ({spike_ratio}x 20-period avg)."
+        elif spike_ratio <= 0.7:
+            interp = f"Volume drying up ({spike_ratio}x avg), indicates low conviction."
+        else:
+            interp = f"Normal liquidity participation ({spike_ratio}x avg)."
+
+        return VolumeMetrics(
+            trend=trend,
+            spike_ratio=spike_ratio,
+            is_volume_confirmed=is_confirmed,
+            interpretation=interp
+        )
+
+    @staticmethod
     def find_support_resistance(candles: List[Dict[str, Any]], window: int = 5) -> Tuple[List[float], List[float]]:
         if len(candles) < window * 2 + 1:
             return [], []
@@ -209,6 +258,50 @@ class TechnicalAnalysisService:
         recent_supports = sorted(list(set(supports[-4:]))) if supports else []
         recent_resistances = sorted(list(set(resistances[-4:]))) if resistances else []
         return recent_supports, recent_resistances
+
+    @classmethod
+    def validate_sr_buffer(
+        cls,
+        current_price: float,
+        trend: str,
+        supports: List[float],
+        resistances: List[float],
+        atr: float
+    ) -> SupportResistanceBuffer:
+        """
+        Validates whether there is sufficient headroom between ENTRY and overhead RESISTANCE (for BUY)
+        or underlying SUPPORT (for SELL). Rejects buying directly under ceiling resistance!
+        """
+        min_buffer = atr * 1.5
+        overhead_resistances = [r for r in resistances if r > current_price]
+        underlying_supports = [s for s in supports if s < current_price]
+
+        nearest_res = min(overhead_resistances) if overhead_resistances else None
+        nearest_sup = max(underlying_supports) if underlying_supports else None
+
+        dist_res = round(nearest_res - current_price, 4) if nearest_res else None
+        dist_sup = round(current_price - nearest_sup, 4) if nearest_sup else None
+
+        has_headroom = True
+        verdict = "Sufficient clearance to nearest structural levels."
+
+        if trend == "bullish" and dist_res is not None:
+            if dist_res < min_buffer:
+                has_headroom = False
+                verdict = f"Insufficient headroom: Price is only {dist_res:.2f} pts from overhead resistance (${nearest_res:.2f}). Wait for confirmed breakout."
+        elif trend == "bearish" and dist_sup is not None:
+            if dist_sup < min_buffer:
+                has_headroom = False
+                verdict = f"Insufficient headroom: Price is only {dist_sup:.2f} pts from support floor (${nearest_sup:.2f}). Wait for breakdown."
+
+        return SupportResistanceBuffer(
+            has_sufficient_headroom=has_headroom,
+            nearest_support=nearest_sup,
+            nearest_resistance=nearest_res,
+            distance_to_resistance=dist_res,
+            distance_to_support=dist_sup,
+            verdict=verdict
+        )
 
     @classmethod
     def detect_market_structure(cls, candles: List[Dict[str, Any]], window: int = 4) -> MarketStructureResult:
@@ -240,10 +333,6 @@ class TechnicalAnalysisService:
                 swing_lows.append(round(curr_low, 4))
 
         current_close = candles[-1]["close"]
-        
-        # Analyze structure progression
-        is_bullish_progression = False
-        is_bearish_progression = False
         bos = False
         choch = False
         recent_bos = None
@@ -256,27 +345,23 @@ class TechnicalAnalysisService:
             ll = swing_lows[-1] < swing_lows[-2]
 
             if hh and hl:
-                is_bullish_progression = True
-                pattern = "HH-HL (Bullish Trend Structure)"
+                pattern = "HH → HL → HH (Bullish Trend Structure)"
                 structure_bias = "BULLISH"
                 if current_close > swing_highs[-1]:
                     bos = True
                     recent_bos = swing_highs[-1]
             elif lh and ll:
-                is_bearish_progression = True
-                pattern = "LH-LL (Bearish Trend Structure)"
+                pattern = "LH → LL → LH (Bearish Trend Structure)"
                 structure_bias = "BEARISH"
                 if current_close < swing_lows[-1]:
                     bos = True
                     recent_bos = swing_lows[-1]
             elif hh and not hl:
-                # Potential Change of Character from bearish to bullish
                 pattern = "CHoCH (Bullish Reversal Shift)"
                 structure_bias = "BULLISH"
                 choch = True
                 recent_choch = swing_highs[-2]
             elif ll and not lh:
-                # Potential Change of Character from bullish to bearish
                 pattern = "CHoCH (Bearish Reversal Shift)"
                 structure_bias = "BEARISH"
                 choch = True
@@ -325,19 +410,16 @@ class TechnicalAnalysisService:
         """
         bb_width = ((bb.upper - bb.lower) / bb.middle) if bb.middle > 0 else 0.0
 
-        # Check Breakout
         if current_close > bb.upper or current_close < bb.lower:
             regime = "BREAKOUT"
             confidence = 88.0
             volatility_state = "EXPANDING"
-            rec = "Wait for breakout confirmation or first retest before entry."
-        # Check Strong Trend
+            rec = "Wait for breakout confirmation candle or first pullback retest."
         elif adx >= 28 and ((current_close > ema_20 > ema_50) or (current_close < ema_20 < ema_50)):
             regime = "STRONG_TREND"
             confidence = 92.0
             volatility_state = "NORMAL"
             rec = "Trade trend continuation pullbacks with directional momentum."
-        # Check Pullback
         elif structure.structure_bias == "BULLISH" and current_close <= ema_20 and current_close >= ema_50:
             regime = "PULLBACK"
             confidence = 86.0
@@ -348,13 +430,11 @@ class TechnicalAnalysisService:
             confidence = 86.0
             volatility_state = "COMPRESSING"
             rec = "Look for bearish rejection off dynamic EMA 20/50 resistance."
-        # Check Range
         elif adx < 20 or structure.structure_bias == "RANGING":
             regime = "RANGE"
             confidence = 80.0
             volatility_state = "COMPRESSING"
             rec = "Fade range extremes at verified Support & Resistance boundaries."
-        # Check High Volatility
         elif bb_width > 0.04:
             regime = "HIGH_VOLATILITY"
             confidence = 75.0
@@ -375,6 +455,7 @@ class TechnicalAnalysisService:
 
     @classmethod
     def analyze(cls, symbol: str, timeframe: str, candles: List[Dict[str, Any]]) -> TechnicalAnalysisResult:
+        now = datetime.now(timezone.utc)
         if not candles:
             return TechnicalAnalysisResult(
                 symbol=symbol,
@@ -383,18 +464,22 @@ class TechnicalAnalysisService:
                 momentum="moderate",
                 rsi=50.0,
                 macd=MACDResult(value=0, signal=0, histogram=0),
-                ema_20=0, ema_50=0, ema_200=0,
+                ema_20=0, ema_50=0, ema_100=0, ema_200=0,
+                sma_20=0, sma_50=0, sma_200=0,
                 atr=1.0,
                 adx=25.0,
                 stochastic_k=50.0,
                 stochastic_d=50.0,
                 bollinger_bands=BollingerBandsResult(upper=0, middle=0, lower=0),
+                volume_metrics=None,
                 support_levels=[],
                 resistance_levels=[],
+                sr_buffer=None,
+                indicator_evidence={},
                 market_structure=None,
                 market_regime=None,
                 summary="Insufficient candle data for quantitative scan.",
-                timestamp=datetime.now(timezone.utc)
+                timestamp=now
             )
 
         closes = [c["close"] for c in candles]
@@ -404,11 +489,16 @@ class TechnicalAnalysisService:
         macd = cls.calculate_macd(closes)
         ema_20 = cls.calculate_ema(closes, 20)
         ema_50 = cls.calculate_ema(closes, 50)
+        ema_100 = cls.calculate_ema(closes, 100 if len(closes) >= 100 else len(closes))
         ema_200 = cls.calculate_ema(closes, 200 if len(closes) >= 200 else len(closes))
+        sma_20 = cls.calculate_sma(closes, 20)
+        sma_50 = cls.calculate_sma(closes, 50)
+        sma_200 = cls.calculate_sma(closes, 200 if len(closes) >= 200 else len(closes))
         atr = cls.calculate_atr(candles, 14)
         adx = cls.calculate_adx(candles, 14)
         stoch_k, stoch_d = cls.calculate_stochastic(candles, 14, 3)
         bb = cls.calculate_bollinger_bands(closes, 20)
+        volume_m = cls.calculate_volume_metrics(candles)
         supports, resistances = cls.find_support_resistance(candles)
         structure = cls.detect_market_structure(candles)
         regime = cls.detect_market_regime(
@@ -431,10 +521,53 @@ class TechnicalAnalysisService:
         else:
             momentum = "weak"
 
+        # Check Support & Resistance Headroom
+        sr_buf = cls.validate_sr_buffer(current_close, trend, supports, resistances, atr)
+
+        # Build Standardized Indicator Evidence Dictionary
+        evidence = {
+            "rsi": IndicatorEvidence(
+                value=rsi,
+                direction="bullish" if rsi > 55 else "bearish" if rsi < 45 else "neutral",
+                interpretation=f"RSI is at {rsi:.1f} ({'Strong Bullish' if rsi > 60 else 'Bearish Pressure' if rsi < 40 else 'Neutral Median'}).",
+                strength=round(abs(rsi - 50.0) / 50.0, 2),
+                timestamp=now
+            ),
+            "macd": IndicatorEvidence(
+                value=macd.histogram,
+                direction="bullish" if macd.histogram > 0 else "bearish",
+                interpretation=f"MACD histogram is {macd.histogram:+.4f} with {'positive' if macd.value > macd.signal else 'negative'} signal line crossover.",
+                strength=0.85 if abs(macd.histogram) > atr * 0.1 else 0.5,
+                timestamp=now
+            ),
+            "adx": IndicatorEvidence(
+                value=adx,
+                direction="bullish" if adx > 25 and trend == "bullish" else "bearish" if adx > 25 and trend == "bearish" else "neutral",
+                interpretation=f"ADX at {adx:.1f} indicates {'Strong Trending Edge' if adx > 25 else 'Chop / Range Bound Market'}.",
+                strength=round(min(1.0, adx / 40.0), 2),
+                timestamp=now
+            ),
+            "stochastic": IndicatorEvidence(
+                value=stoch_k,
+                direction="bullish" if stoch_k > stoch_d and stoch_k < 80 else "bearish" if stoch_k < stoch_d and stoch_k > 20 else "neutral",
+                interpretation=f"Stoch %K ({stoch_k:.1f}) and %D ({stoch_d:.1f}) {'bullish expansion' if stoch_k > stoch_d else 'bearish cycle'}.",
+                strength=0.75,
+                timestamp=now
+            ),
+            "ema_trend": IndicatorEvidence(
+                value=ema_20,
+                direction="bullish" if ema_20 > ema_50 else "bearish",
+                interpretation=f"EMA 20 (${ema_20:.2f}) {'leads' if ema_20 > ema_50 else 'trails'} EMA 50 (${ema_50:.2f}) and EMA 200 (${ema_200:.2f}).",
+                strength=0.90,
+                timestamp=now
+            )
+        }
+
         summary = (
             f"{trend.upper()} bias on {timeframe} ({structure.pattern}). "
             f"RSI: {rsi}, ADX: {adx} ({regime.regime.replace('_', ' ')}). "
-            f"EMA 20/50 alignment: {'Bullish' if ema_20 > ema_50 else 'Bearish'}."
+            f"EMA 20/50/200 alignment: {'Bullish' if ema_20 > ema_50 else 'Bearish'}. "
+            f"SR Headroom: {sr_buf.verdict}"
         )
 
         return TechnicalAnalysisResult(
@@ -446,16 +579,23 @@ class TechnicalAnalysisService:
             macd=macd,
             ema_20=ema_20,
             ema_50=ema_50,
+            ema_100=ema_100,
             ema_200=ema_200,
+            sma_20=sma_20,
+            sma_50=sma_50,
+            sma_200=sma_200,
             atr=atr,
             adx=adx,
             stochastic_k=stoch_k,
             stochastic_d=stoch_d,
             bollinger_bands=bb,
+            volume_metrics=volume_m,
             support_levels=supports,
             resistance_levels=resistances,
+            sr_buffer=sr_buf,
+            indicator_evidence=evidence,
             market_structure=structure,
             market_regime=regime,
             summary=summary,
-            timestamp=datetime.now(timezone.utc)
+            timestamp=now
         )
