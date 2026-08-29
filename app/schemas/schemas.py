@@ -176,6 +176,57 @@ class BollingerBandsResult(BaseModel):
     middle: float
     lower: float
 
+class MarketStructureResult(BaseModel):
+    structure_bias: Literal["BULLISH", "BEARISH", "RANGING"]
+    pattern: str # e.g. "HH-HL (Bullish Structure)" or "LH-LL (Bearish Structure)"
+    break_of_structure: bool
+    change_of_character: bool
+    swing_highs: List[float] = []
+    swing_lows: List[float] = []
+    recent_bos_level: Optional[float] = None
+    recent_choch_level: Optional[float] = None
+
+class MarketRegimeResult(BaseModel):
+    regime: Literal["STRONG_TREND", "WEAK_TREND", "RANGE", "BREAKOUT", "PULLBACK", "HIGH_VOLATILITY", "UNCERTAIN"]
+    confidence: float
+    volatility_state: Literal["EXPANDING", "NORMAL", "COMPRESSING"]
+    recommendation: str
+
+class TimeframeAlignment(BaseModel):
+    timeframe: str
+    trend: Literal["BULLISH", "BEARISH", "NEUTRAL"]
+    bias: str
+    confidence: float
+
+class MultiTimeframeSummary(BaseModel):
+    alignment_score: float # 0 - 100
+    alignment_state: Literal["ALIGNED_BULLISH", "ALIGNED_BEARISH", "MIXED_PULLBACK", "CONFLICT_WAIT"]
+    timeframes: Dict[str, TimeframeAlignment]
+
+class ConfidenceScoreBreakdown(BaseModel):
+    trend: float = 0.0 # max 20
+    structure: float = 0.0 # max 20
+    momentum: float = 0.0 # max 15
+    mtf: float = 0.0 # max 15
+    news: float = 0.0 # max 10
+    volatility: float = 0.0 # max 10
+    risk_reward: float = 0.0 # max 10
+    total: float = 0.0 # 0-100
+    strength_tier: Literal["WEAK", "MODERATE", "HIGH", "VERY_HIGH"]
+
+class SignalInvalidation(BaseModel):
+    invalidation_price: Optional[float] = None
+    invalidation_reason: str
+    conditions: List[str] = []
+
+class EconomicEventItem(BaseModel):
+    title: str
+    impact: Literal["HIGH", "MEDIUM", "LOW"]
+    currency: str
+    time_label: str
+    is_approaching: bool
+    risk_level: Literal["HIGH", "MODERATE", "LOW"]
+
 class TechnicalAnalysisResult(BaseModel):
     symbol: str
     timeframe: str
@@ -187,9 +238,14 @@ class TechnicalAnalysisResult(BaseModel):
     ema_50: float
     ema_200: float
     atr: float
+    adx: Optional[float] = 25.0
+    stochastic_k: Optional[float] = 50.0
+    stochastic_d: Optional[float] = 50.0
     bollinger_bands: BollingerBandsResult
     support_levels: List[float]
     resistance_levels: List[float]
+    market_structure: Optional[MarketStructureResult] = None
+    market_regime: Optional[MarketRegimeResult] = None
     summary: str
     timestamp: datetime
 
@@ -224,6 +280,9 @@ class AIAnalyzeResponse(BaseModel):
     timeframe: str
     direction: Literal["BUY", "SELL", "NO_TRADE"]
     entry: Optional[float] = None
+    entry_min: Optional[float] = None
+    entry_max: Optional[float] = None
+    entry_type: Literal["MARKET", "PULLBACK_LIMIT", "BREAKOUT_CONFIRMATION", "WAIT"] = "MARKET"
     stop_loss: Optional[float] = None
     take_profit_1: Optional[float] = None
     take_profit_2: Optional[float] = None
@@ -232,9 +291,17 @@ class AIAnalyzeResponse(BaseModel):
     risk_reward: float
     market_bias: str
     technical_analysis: Dict[str, Any]
+    market_structure: Optional[MarketStructureResult] = None
+    market_regime: Optional[MarketRegimeResult] = None
+    mtf_alignment: Optional[MultiTimeframeSummary] = None
+    confidence_breakdown: Optional[ConfidenceScoreBreakdown] = None
+    invalidation: Optional[SignalInvalidation] = None
+    economic_events: Optional[List[EconomicEventItem]] = None
     news_sentiment: Dict[str, Any]
     risk_assessment: str
     reasoning: str
+    reasons: List[str] = []
+    risks: List[str] = []
     analyst_votes: Dict[str, AnalystVote]
     timestamp: datetime
     data_mode: str = "mock"
