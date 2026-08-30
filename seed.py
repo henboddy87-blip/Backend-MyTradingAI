@@ -156,34 +156,48 @@ def run_seed():
     # 5. Seed Real-time Financial & Economic News (English & Khmer)
     news_items = [
         News(
-            title="Federal Reserve Signals Measured Stance as Inflation Normalizes",
-            summary="FOMC meeting minutes indicate broad alignment on equilibrium interest rates with steady liquidity support for risk assets.",
+            title="Gold Breaks Out Toward New Record Highs as Safe-Haven Inflows Accelerate",
+            summary="Spot bullion (XAUUSD) surges past key resistance levels driven by central bank reserve allocations and heightened geopolitical hedging.",
             source="Institutional Macro Wire",
             language="en",
-            category="Central Banks",
+            category="Commodities",
             impact="HIGH",
-            affected_symbols_json=["XAUUSD", "EURUSD", "NAS100", "US30"],
-            published_at=now - datetime.timedelta(hours=2)
+            affected_symbols_json=["XAUUSD"],
+            published_at=now - datetime.timedelta(minutes=4),
+            created_at=now - datetime.timedelta(minutes=4)
         ),
         News(
-            title="Bitcoin Institutional Custody Inflows Surge Past $1.8B This Week",
-            summary="Sustained spot ETF volume and long-term whale accumulation push crypto market dominance to multi-month highs.",
+            title="Bitcoin Institutional ETF Inflows Surge Past $2.4B Amid Whale Accumulation",
+            summary="Sustained spot ETF volume and institutional custody demand push crypto market dominance to multi-month highs above key order blocks.",
             source="Crypto Intelligence Desk",
             language="en",
             category="Crypto",
             impact="HIGH",
             affected_symbols_json=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
-            published_at=now - datetime.timedelta(hours=5)
+            published_at=now - datetime.timedelta(minutes=18),
+            created_at=now - datetime.timedelta(minutes=18)
         ),
         News(
-            title="Gold Consolidates Near Record Levels Amid Central Bank Reserve Buys",
-            summary="Sovereign treasury allocations into bullion maintain upward support despite brief dollar index strength.",
-            source="Precious Metals Daily",
+            title="Federal Reserve Signals Measured Stance as Inflation Normalizes",
+            summary="FOMC meeting minutes indicate broad alignment on equilibrium interest rates with steady liquidity support for risk assets.",
+            source="Central Bank Monitor",
+            language="en",
+            category="Central Banks",
+            impact="HIGH",
+            affected_symbols_json=["XAUUSD", "EURUSD", "NAS100", "US30"],
+            published_at=now - datetime.timedelta(minutes=42),
+            created_at=now - datetime.timedelta(minutes=42)
+        ),
+        News(
+            title="Crude Oil Consolidates Following Middle East Supply Disruption Concerns",
+            summary="WTI (USOIL) trades within a tight volatility band as OPEC+ production quotas offset shifting global refinery demand dynamics.",
+            source="Energy Futures Desk",
             language="en",
             category="Commodities",
-            impact="HIGH",
-            affected_symbols_json=["XAUUSD"],
-            published_at=now - datetime.timedelta(hours=8)
+            impact="MEDIUM",
+            affected_symbols_json=["USOIL"],
+            published_at=now - datetime.timedelta(hours=1, minutes=15),
+            created_at=now - datetime.timedelta(hours=1, minutes=15)
         ),
         News(
             title="Tech Sector Rallies as AI Infrastructure Capex Surpasses Projections",
@@ -193,7 +207,8 @@ def run_seed():
             category="Stocks",
             impact="MEDIUM",
             affected_symbols_json=["NVDA", "AAPL", "NAS100"],
-            published_at=now - datetime.timedelta(hours=14)
+            published_at=now - datetime.timedelta(hours=2, minutes=30),
+            created_at=now - datetime.timedelta(hours=2, minutes=30)
         ),
         News(
             title="ព័ត៌មានទីផ្សារហិរញ្ញវត្ថុ៖ តម្លៃមាសបន្តកើនឡើងចំពេលធនាគារកណ្តាលទិញបង្គរ",
@@ -203,7 +218,8 @@ def run_seed():
             category="Commodities",
             impact="HIGH",
             affected_symbols_json=["XAUUSD", "BTCUSDT"],
-            published_at=now - datetime.timedelta(hours=4)
+            published_at=now - datetime.timedelta(minutes=8),
+            created_at=now - datetime.timedelta(minutes=8)
         ),
         News(
             title="បច្ចុប្បន្នភាពរូបិយប័ណ្ណឌីជីថល៖ Bitcoin រក្សាកម្រិតគាំទ្រដ៏រឹងមាំ",
@@ -213,23 +229,25 @@ def run_seed():
             category="Crypto",
             impact="HIGH",
             affected_symbols_json=["BTCUSDT", "ETHUSDT"],
-            published_at=now - datetime.timedelta(hours=9)
+            published_at=now - datetime.timedelta(minutes=30),
+            created_at=now - datetime.timedelta(minutes=30)
         )
     ]
     db.add_all(news_items)
     db.commit()
 
     for item in news_items:
-        sentiment_type = "positive" if "Surge" in item.title or "Rallies" in item.title or "កើនឡើង" in item.title or "វិជ្ជមាន" in item.title else "neutral"
-        score = 0.75 if sentiment_type == "positive" else 0.1
+        sentiment_type = "positive" if any(w in item.title for w in ["Surge", "Rallies", "Breaks Out", "កើនឡើង", "វិជ្ជមាន"]) else "neutral"
+        score = 0.85 if sentiment_type == "positive" else 0.1
         db.add(NewsSentiment(
             news_id=item.id,
             sentiment=sentiment_type,
             score=score,
-            confidence=85.0,
-            reasoning="Constructive macroeconomic wording and structural liquidity indicators."
+            confidence=88.0,
+            reasoning="Constructive macroeconomic wording and structural liquidity indicators confirming directional conviction."
         ))
     db.commit()
+
 
     # 6. Seed System Logs
     db.add_all([

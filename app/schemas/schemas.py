@@ -603,6 +603,14 @@ class NewsSentimentOut(BaseModel):
     confidence: float
     reasoning: Optional[str] = None
 
+class NewsSignalCatalystOut(BaseModel):
+    bias: str # BULLISH, BEARISH, NEUTRAL
+    confluence_boost: str # e.g. +15 pts Boost
+    setup_type: str
+    primary_symbol: str
+    action_label: str
+    reasoning: str
+
 class NewsOut(BaseModel):
     id: int
     title: str
@@ -615,10 +623,25 @@ class NewsOut(BaseModel):
     impact: str
     affected_symbols_json: List[str] = []
     published_at: datetime
+    time_ago: Optional[str] = None
+    signal_catalyst: Optional[NewsSignalCatalystOut] = None
     sentiment: Optional[NewsSentimentOut] = None
 
     class Config:
         from_attributes = True
+
+class NewsSignalGenerateRequest(BaseModel):
+    news_id: int
+    symbol: Optional[str] = None
+    timeframe: str = "1h"
+    risk_level: str = "Medium"
+
+class NewsSyncResponse(BaseModel):
+    status: str
+    message: str
+    synced_count: int
+    total_news: int
+
 
 # --- TRACK RECORD SCHEMAS ---
 class EquityPoint(BaseModel):

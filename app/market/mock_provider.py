@@ -7,21 +7,21 @@ from app.market.provider import MarketDataProvider
 
 # Base reference configurations for supported assets
 BASE_ASSETS = {
-    "XAUUSD": {"name": "Gold / US Dollar", "type": "commodity", "base_price": 4460.00, "volatility": 0.006, "precision": 2},
-    "BTCUSDT": {"name": "Bitcoin / Tether", "type": "crypto", "base_price": 64850.00, "volatility": 0.015, "precision": 2},
-    "ETHUSDT": {"name": "Ethereum / Tether", "type": "crypto", "base_price": 3480.00, "volatility": 0.018, "precision": 2},
-    "SOLUSDT": {"name": "Solana / Tether", "type": "crypto", "base_price": 146.20, "volatility": 0.025, "precision": 2},
-    "BNBUSDT": {"name": "BNB / Tether", "type": "crypto", "base_price": 585.40, "volatility": 0.012, "precision": 2},
-    "EURUSD": {"name": "Euro / US Dollar", "type": "forex", "base_price": 1.0865, "volatility": 0.003, "precision": 4},
-    "GBPUSD": {"name": "British Pound / US Dollar", "type": "forex", "base_price": 1.2940, "volatility": 0.004, "precision": 4},
-    "USDJPY": {"name": "US Dollar / Japanese Yen", "type": "forex", "base_price": 152.65, "volatility": 0.004, "precision": 2},
-    "USOIL": {"name": "Crude Oil WTI", "type": "commodity", "base_price": 74.80, "volatility": 0.012, "precision": 2},
-    "UKOIL": {"name": "Brent Crude Oil", "type": "commodity", "base_price": 78.40, "volatility": 0.011, "precision": 2},
-    "AAPL": {"name": "Apple Inc.", "type": "stock", "base_price": 228.60, "volatility": 0.008, "precision": 2},
-    "TSLA": {"name": "Tesla, Inc.", "type": "stock", "base_price": 242.50, "volatility": 0.020, "precision": 2},
-    "NVDA": {"name": "NVIDIA Corporation", "type": "stock", "base_price": 124.80, "volatility": 0.022, "precision": 2},
-    "NAS100": {"name": "Nasdaq 100", "type": "index", "base_price": 19820.00, "volatility": 0.007, "precision": 2},
-    "US30": {"name": "Dow Jones 30", "type": "index", "base_price": 41250.00, "volatility": 0.005, "precision": 2},
+    "XAUUSD": {"name": "Gold / US Dollar", "type": "commodity", "base_price": 4466.00, "volatility": 0.006, "precision": 2},
+    "BTCUSDT": {"name": "Bitcoin / Tether", "type": "crypto", "base_price": 78680.00, "volatility": 0.015, "precision": 2},
+    "ETHUSDT": {"name": "Ethereum / Tether", "type": "crypto", "base_price": 2465.00, "volatility": 0.018, "precision": 2},
+    "SOLUSDT": {"name": "Solana / Tether", "type": "crypto", "base_price": 106.00, "volatility": 0.025, "precision": 2},
+    "BNBUSDT": {"name": "BNB / Tether", "type": "crypto", "base_price": 695.50, "volatility": 0.012, "precision": 2},
+    "EURUSD": {"name": "Euro / US Dollar", "type": "forex", "base_price": 1.1585, "volatility": 0.003, "precision": 4},
+    "GBPUSD": {"name": "British Pound / US Dollar", "type": "forex", "base_price": 1.3530, "volatility": 0.004, "precision": 4},
+    "USDJPY": {"name": "US Dollar / Japanese Yen", "type": "forex", "base_price": 155.20, "volatility": 0.004, "precision": 2},
+    "USOIL": {"name": "Crude Oil WTI", "type": "commodity", "base_price": 83.40, "volatility": 0.012, "precision": 2},
+    "UKOIL": {"name": "Brent Crude Oil", "type": "commodity", "base_price": 87.20, "volatility": 0.011, "precision": 2},
+    "AAPL": {"name": "Apple Inc.", "type": "stock", "base_price": 234.50, "volatility": 0.008, "precision": 2},
+    "TSLA": {"name": "Tesla, Inc.", "type": "stock", "base_price": 258.00, "volatility": 0.020, "precision": 2},
+    "NVDA": {"name": "NVIDIA Corporation", "type": "stock", "base_price": 217.50, "volatility": 0.022, "precision": 2},
+    "NAS100": {"name": "Nasdaq 100", "type": "index", "base_price": 29490.00, "volatility": 0.007, "precision": 2},
+    "US30": {"name": "Dow Jones 30", "type": "index", "base_price": 44250.00, "volatility": 0.005, "precision": 2},
 }
 
 TIMEFRAME_SECONDS = {

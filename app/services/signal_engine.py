@@ -164,6 +164,16 @@ class SignalEngine:
         buy_pts *= sess_mult
         sell_pts *= sess_mult
 
+        # 13. Smart Money Liquidity Sweep Stop-Hunt Confluence
+        if smc and getattr(smc, 'liquidity_sweeps', None):
+            for sweep in smc.liquidity_sweeps[:2]:
+                if sweep.reversal_bias == "BULLISH":
+                    buy_pts += 4.0
+                    sell_pts *= 0.92
+                elif sweep.reversal_bias == "BEARISH":
+                    sell_pts += 4.0
+                    buy_pts *= 0.92
+
         # If imminent high-impact event risk is detected -> discount both sides!
         if event_risk and event_risk.get("news_risk") == "HIGH":
             buy_pts *= 0.65
@@ -217,7 +227,7 @@ class SignalEngine:
         )
         news_confirm["news_bias"] = news_sentiment.get("bias", "NEUTRAL")
 
-        # 5. Calculate Evidence-Based Confluence Scores across 10 Pillars + SMC + Session
+        # 5. Calculate Evidence-Based Confluence Scores across 10 Pillars + SMC + Session + Liquidity Sweeps
         scores = cls.calculate_confluence_scores(tech, mtf, news_confirm, event_risk, current_price, smc=smc)
         buy_score = scores["buy_score"]
         sell_score = scores["sell_score"]
@@ -272,19 +282,29 @@ class SignalEngine:
 
         atr = tech.atr if tech.atr > 0 else (current_price * 0.01)
 
-        # 8. Calculate Entry, SL, TP Goals
+        # 8. Calculate Entry, SL, TP Goals with Multi-Phase Execution Positioning
         if direction in ["BUY", "SELL"]:
             entry = current_price
             stop_loss, tp1, tp2, tp3, risk_reward, sl_dist, tp1_dist, tp2_dist, tp3_dist = calculate_trader_targets(
                 symbol, current_price, direction, atr, precision
             )
             move_sign = "+" if direction == "BUY" else "-"
+
+            if confidence >= 80.0 and net_advantage >= 30.0 and not any(v.veto for v in votes.values()):
+                setup_grade = "A+ INSTITUTIONAL SETUP"
+            elif confidence >= 75.0:
+                setup_grade = "GRADE A HIGH CONVICTION"
+            else:
+                setup_grade = "GRADE B STANDARD SETUP"
+
+            sweep_label = f" | Liquidity Sweep: {smc.liquidity_sweeps[0].sweep_type.replace('_', ' ')}" if smc and smc.liquidity_sweeps else ""
+
             reasoning = (
-                f"High-Conviction {direction} Signal ({confidence}% Confluence Score | Buy Score: {buy_score}, Sell Score: {sell_score}). "
+                f"[{setup_grade}] High-Conviction {direction} Signal ({confidence}% Confluence Score | Buy Score: {buy_score}, Sell Score: {sell_score}{sweep_label}). "
                 f"Session Timing: {session_info.get('session_label')} ({session_info.get('quality')}). "
                 f"Smart Money Flow: {smc.smc_bias} in {smc.premium_discount_zone.replace('_', ' ')} (Eq: ${smc.equilibrium_price:.2f}). "
+                f"Execution Strategy: Phase 1 Entry @ ${entry:.2f} | Phase 2 TP1 ({move_sign}{tp1_dist:.2f} pts - Auto-Breakeven at trigger) | Phase 3 TP2 ({move_sign}{tp2_dist:.2f} pts - Trailing Stop) | Phase 4 TP3 ({move_sign}{tp3_dist:.2f} pts Runner Target). "
                 f"Market Structure: {tech.market_structure.pattern if tech.market_structure else 'Trend'} with {mtf.alignment_score}% MTF synergy. "
-                f"Target Goals: TP1 ({move_sign}{tp1_dist:.2f} pts - Auto-Breakeven at trigger), TP2 ({move_sign}{tp2_dist:.2f} pts - Trailing Stop), TP3 ({move_sign}{tp3_dist:.2f} pts). "
                 f"News Confirmation: {news_confirm.get('status')} ({news_sentiment.get('bullish')}% Bullish Sentiment). "
                 f"SR Clearance: {tech.sr_buffer.verdict if tech.sr_buffer else 'Clear headroom'}."
             )
@@ -301,6 +321,7 @@ class SignalEngine:
                 f"SMC State: {smc.institutional_verdict} "
                 f"{event_risk.get('warning') if event_risk.get('news_risk') == 'HIGH' else tech.sr_buffer.verdict if (tech.sr_buffer and not tech.sr_buffer.has_sufficient_headroom) else 'Directional advantage is below institutional threshold (minimum 70% score + 25 pts edge required).'}"
             )
+
 
         now = datetime.datetime.now(datetime.timezone.utc)
         signal = Signal(
